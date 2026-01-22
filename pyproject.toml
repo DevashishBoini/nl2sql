@@ -6,8 +6,13 @@ authors = [
     {name = "Boini Devashish",email = "bdevashish957@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
+    "fastapi (>=0.109.0,<0.110.0)",
+    "uvicorn[standard] (>=0.40.0,<0.41.0)",
+    "pydantic (>=2.12.5,<3.0.0)",
+    "pydantic-settings (>=2.12.0,<3.0.0)",
+    "pytest (>=9.0.2,<10.0.0)"
 ]
 
 
