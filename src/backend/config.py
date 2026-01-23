@@ -1,7 +1,7 @@
 # src/nl2sql/config.py
 
 from functools import lru_cache
-from backend.constants import LogLevel, OPENROUTER_EMBEDDING_MODELS, OPENROUTER_LLM_MODELS
+from backend.config_constants import LogLevel, OPENROUTER_EMBEDDING_MODELS, OPENROUTER_LLM_MODELS
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -55,6 +55,18 @@ class RetrievalConfig(BaseModel):
 
 
 # -------------------------
+# Server
+# -------------------------
+
+class ServerConfig(BaseModel):
+    host: str = "0.0.0.0"
+    port: int = 8000
+    app_module: str = "backend.main:app"
+    reload: bool = True
+    workers: int = 1
+
+
+# -------------------------
 # App
 # -------------------------
 
@@ -74,7 +86,8 @@ class Settings(BaseSettings):
     llm: LLMConfig
     embedding: EmbeddingConfig
     retrieval: RetrievalConfig = RetrievalConfig()
-    app: AppConfig
+    server: ServerConfig = ServerConfig()
+    app: AppConfig = AppConfig()
 
     model_config = SettingsConfigDict(
         env_file=".env",

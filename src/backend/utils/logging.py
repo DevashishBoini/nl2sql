@@ -32,6 +32,62 @@ def _add_module_info(logger: Any, method_name: str, event_dict: structlog.types.
     return event_dict
 
 
+def _pretty_json_renderer(logger: Any, method_name: str, event_dict: structlog.types.EventDict) -> str:
+    """
+    Pretty JSON renderer with proper indentation and formatting.
+
+    Always renders logs as properly formatted JSON with 2-space indentation,
+    regardless of environment.
+    """
+    import json
+    return json.dumps(event_dict, indent=2, ensure_ascii=False, default=str)
+
+
+def _dev_formatter(logger: Any, method_name: str, event_dict: structlog.types.EventDict) -> str:
+    """
+    Development-friendly formatter for better readability.
+
+    Formats logs in a human-readable way with colors and proper spacing.
+    """
+    timestamp = event_dict.get('timestamp', '')
+    level = event_dict.get('level', '').upper()
+    module = event_dict.get('module', '')
+    event = event_dict.get('event', '')
+    trace_id = event_dict.get('trace_id', '')
+
+    # Color codes for different log levels
+    colors = {
+        'DEBUG': '\033[36m',    # Cyan
+        'INFO': '\033[32m',     # Green
+        'WARNING': '\033[33m',  # Yellow
+        'ERROR': '\033[31m',    # Red
+        'CRITICAL': '\033[35m', # Magenta
+    }
+    reset = '\033[0m'
+
+    color = colors.get(level, '')
+
+    # Format the main message
+    main_msg = f"{timestamp} {color}[{level}]{reset} {module}: {event}"
+
+    # Add trace_id if present
+    if trace_id:
+        main_msg += f" (trace: {trace_id[:8]})"
+
+    # Add other fields
+    other_fields = []
+    skip_fields = {'timestamp', 'level', 'module', 'event', 'trace_id', 'logger'}
+
+    for key, value in event_dict.items():
+        if key not in skip_fields:
+            other_fields.append(f"{key}={value}")
+
+    if other_fields:
+        main_msg += f" | {', '.join(other_fields)}"
+
+    return main_msg
+
+
 def configure_logging() -> None:
     """Configure structured logging for the application."""
 
@@ -51,7 +107,7 @@ def configure_logging() -> None:
         handlers=[logging.StreamHandler()]
     )
 
-    # Configure structlog with enhanced file/module tracking
+    # Configure structlog with pretty JSON output (always formatted)
     structlog.configure(
         processors=[
             structlog.stdlib.filter_by_level,
@@ -63,7 +119,7 @@ def configure_logging() -> None:
             structlog.processors.format_exc_info,
             structlog.processors.UnicodeDecoder(),
             _add_module_info,  # Custom processor to add file info
-            structlog.processors.JSONRenderer()  # Final JSON output
+            _pretty_json_renderer,  # Always pretty print JSON with indentation
         ],
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
@@ -80,15 +136,22 @@ def get_logger(name: str) -> structlog.stdlib.BoundLogger:
         name: Logger name, typically __name__ to get the module name
 
     Returns:
-        Configured structlog logger with JSON output
+        Configured structlog logger with pretty JSON output
 
     Usage:
         logger = get_logger(__name__)
         logger.info("Schema indexing started", tables_count=14, trace_id="abc-123")
 
-        # Output: {"timestamp": "2024-01-22T10:30:00Z", "level": "info",
-        #          "logger": "backend.services.schema_indexer", "module": "services.schema_indexer",
-        #          "event": "Schema indexing started", "tables_count": 14, "trace_id": "abc-123"}
+        # Output (pretty formatted JSON):
+        # {
+        #   "timestamp": "2024-01-22T10:30:00Z",
+        #   "level": "info",
+        #   "logger": "backend.services.schema_indexer",
+        #   "module": "services.schema_indexer",
+        #   "event": "Schema indexing started",
+        #   "tables_count": 14,
+        #   "trace_id": "abc-123"
+        # }
     """
     return structlog.get_logger(name)
 

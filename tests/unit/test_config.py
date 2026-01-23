@@ -1,6 +1,6 @@
 import pytest
 from backend.config import get_settings
-from backend.constants import LogLevel
+from backend.config_constants import LogLevel
 
 
 ## test for import and loading settings
