@@ -169,6 +169,65 @@ class DatabaseClient:
         """Check if database client is connected."""
         return self._is_connected and self._pool is not None
 
+    async def health_check(self) -> Dict[str, Any]:
+        """
+        Perform health check on database connection.
+
+        Returns:
+            Dictionary with status and connection details
+
+        Example:
+            {
+                "status": "healthy",
+                "connected": True,
+                "pool_size": 10,
+                "current_schema": "public"
+            }
+        """
+        trace_id = current_trace_id()
+
+        if not self.is_connected():
+            return {
+                "status": "unhealthy",
+                "connected": False,
+                "error": "Database client not connected"
+            }
+
+        try:
+            async with self.acquire_connection() as conn:
+                # Test connection with simple query
+                result = await conn.fetchval("SELECT 1")
+                current_schema = await conn.fetchval("SELECT current_schema()")
+
+                if result != 1:
+                    return {
+                        "status": "unhealthy",
+                        "connected": True,
+                        "error": "Connection test query failed"
+                    }
+
+                logger.info("Database health check passed", trace_id=trace_id)
+
+                return {
+                    "status": "healthy",
+                    "connected": True,
+                    "pool_size": self.config.connection_pool_max_size,
+                    "current_schema": current_schema
+                }
+
+        except Exception as e:
+            logger.error(
+                "Database health check failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                trace_id=trace_id
+            )
+            return {
+                "status": "unhealthy",
+                "connected": True,
+                "error": str(e)
+            }
+
     @asynccontextmanager
     async def acquire_connection(self, schema: Optional[str] = None):
         """

@@ -1,7 +1,14 @@
 # src/nl2sql/config.py
 
 from functools import lru_cache
-from backend.config_constants import LogLevel, OPENROUTER_EMBEDDING_MODELS, OPENROUTER_LLM_MODELS
+from backend.config_constants import (
+    LogLevel,
+    OPENROUTER_EMBEDDING_MODELS,
+    OPENROUTER_LLM_MODELS,
+    OPEN_ROUTER_API_URL,
+    LLM_MAX_INPUT_CHARS,
+    EMBEDDING_MAX_INPUT_CHARS
+)
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -65,13 +72,27 @@ class LLMConfig(BaseModel):
     default_model: str = OPENROUTER_LLM_MODELS.ANTHROPIC_SONNET_45
     temperature: float = 0.1
     top_p: float = 0.1
-    max_tokens: int = 1024
+    max_tokens: int = 2048
+    max_input_chars: int = LLM_MAX_INPUT_CHARS  # 1.2M characters max input
+
+    # OpenRouter API settings
+    base_url: str = OPEN_ROUTER_API_URL
+    timeout_seconds: int = 60
+    max_retries: int = 3
+    batch_size: int = 10  # Max prompts per batch request (to avoid rate limits/timeouts)
 
 
 class EmbeddingConfig(BaseModel):
     openrouter_api_key: str
     embedding_model: str = OPENROUTER_EMBEDDING_MODELS.OPENAI_TEXT_EMBEDDING_MODEL_3_SMALL
     embedding_dimension: int = 1536
+    max_input_chars: int = EMBEDDING_MAX_INPUT_CHARS  # 30k characters max input
+
+    # OpenRouter API settings
+    base_url: str = OPEN_ROUTER_API_URL
+    timeout_seconds: int = 60
+    max_retries: int = 3
+    batch_size: int = 100  # Max texts to embed in single request
 
 
 # -------------------------

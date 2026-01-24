@@ -21,9 +21,18 @@ from .api.middleware import (
     security_headers_middleware,
     general_exception_handler
 )
+from .api.dependencies import (
+    SettingsDep,
+    OptionalDatabaseClientDep,
+    OptionalStorageClientDep,
+    OptionalLLMClientDep,
+    OptionalEmbeddingClientDep
+)
 from .config import get_settings
 from .infrastructure.database_client import DatabaseClient
 from .infrastructure.storage_client import StorageClient
+from .infrastructure.llm_client import LLMClient
+from .infrastructure.embedding_client import EmbeddingClient
 
 
 # Configure logging on module import
@@ -37,7 +46,10 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting NL2SQL API server", version="0.1.0")
 
+    # Load settings once at startup
     settings = get_settings()
+    app.state.settings = settings
+    logger.info("Settings loaded successfully")
 
     # Initialize database client
     db_client = DatabaseClient(settings.database)
@@ -57,24 +69,51 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to connect storage client: {e}")
         # Continue without storage - health check will report status
 
+    # Initialize LLM client
+    llm_client = LLMClient(settings.llm)
+    try:
+        await llm_client.connect()
+        logger.info("LLM client connected successfully")
+    except Exception as e:
+        logger.error(f"Failed to connect LLM client: {e}")
+        # Continue without LLM - health check will report status
+
+    # Initialize embedding client
+    embedding_client = EmbeddingClient(settings.embedding)
+    try:
+        await embedding_client.connect()
+        logger.info("Embedding client connected successfully")
+    except Exception as e:
+        logger.error(f"Failed to connect embedding client: {e}")
+        # Continue without embeddings - health check will report status
+
     # Store in app state for dependency injection
     app.state.db_client = db_client
     app.state.storage_client = storage_client
+    app.state.llm_client = llm_client
+    app.state.embedding_client = embedding_client
 
     yield
 
     # Shutdown
     logger.info("Shutting down NL2SQL API server")
 
-    # Close database connections
+    # Close all clients
     if hasattr(app.state, "db_client"):
         await app.state.db_client.close()
         logger.info("Database client closed")
 
-    # Close storage connections
     if hasattr(app.state, "storage_client"):
         await app.state.storage_client.close()
         logger.info("Storage client closed")
+
+    if hasattr(app.state, "llm_client"):
+        await app.state.llm_client.close()
+        logger.info("LLM client closed")
+
+    if hasattr(app.state, "embedding_client"):
+        await app.state.embedding_client.close()
+        logger.info("Embedding client closed")
 
 
 # Create FastAPI application
@@ -105,7 +144,7 @@ app.exception_handler(Exception)(general_exception_handler)
 
 # API Routes
 @app.get("/", tags=["Root"])
-async def root() -> Dict[str, Union[str, None]]:
+async def root(settings: SettingsDep) -> Dict[str, Union[str, None]]:
     """Root endpoint returning basic API information."""
 
     trace_id = current_trace_id()
@@ -114,12 +153,18 @@ async def root() -> Dict[str, Union[str, None]]:
     return {
         "message": "NL2SQL API",
         "version": "0.1.0",
-        "trace_id": trace_id
+        "trace_id": trace_id,
+        "log_level": settings.app.log_level
     }
 
 
 @app.get("/health", response_model=HealthResponse, tags=["Health"])
-async def health() -> HealthResponse:
+async def health(
+    db_client: OptionalDatabaseClientDep,
+    storage_client: OptionalStorageClientDep,
+    llm_client: OptionalLLMClientDep,
+    embedding_client: OptionalEmbeddingClientDep
+) -> HealthResponse:
     """Health check endpoint with comprehensive system status."""
 
     trace_id = current_trace_id()
@@ -127,19 +172,32 @@ async def health() -> HealthResponse:
 
     # Check database status
     database_status = "not_configured"
-    if hasattr(app.state, "db_client"):
-        db_health = await app.state.db_client.health_check()
+    if db_client:
+        db_health = await db_client.health_check()
         database_status = db_health.get("status", "unknown")
 
     # Check storage status
     storage_status = "not_configured"
-    if hasattr(app.state, "storage_client"):
-        storage_health = await app.state.storage_client.health_check()
+    if storage_client:
+        storage_health = await storage_client.health_check()
         storage_status = storage_health.get("status", "unknown")
+
+    # Check LLM status
+    llm_status = "not_configured"
+    if llm_client:
+        llm_status = "healthy" if llm_client.is_connected() else "unhealthy"
+
+    # Check embedding status
+    embedding_status = "not_configured"
+    if embedding_client:
+        embedding_status = "healthy" if embedding_client.is_connected() else "unhealthy"
 
     # Determine overall status
     overall_status = "healthy" if (
-        database_status == "healthy" and storage_status == "healthy"
+        database_status == "healthy" and
+        storage_status == "healthy" and
+        llm_status == "healthy" and
+        embedding_status == "healthy"
     ) else "degraded"
 
     return HealthResponse(
@@ -147,9 +205,9 @@ async def health() -> HealthResponse:
         timestamp=datetime.now(timezone.utc),
         version="0.1.0",
         database_status=database_status,
-        vector_store_status=storage_status,  # Using storage as vector store indicator
-        llm_service_status="not_configured",
-        embedding_service_status="not_configured"
+        vector_store_status=storage_status,
+        llm_service_status=llm_status,
+        embedding_service_status=embedding_status
     )
 
 

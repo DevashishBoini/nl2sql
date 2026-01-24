@@ -149,6 +149,67 @@ class StorageClient:
         """Check if storage client is connected."""
         return self._is_connected and self._client is not None
 
+    async def health_check(self) -> Dict[str, Any]:
+        """
+        Perform health check on storage connection.
+
+        Returns:
+            Dictionary with status and connection details
+
+        Example:
+            {
+                "status": "healthy",
+                "connected": True,
+                "storage_url": "https://example.supabase.co/storage/v1",
+                "default_bucket": "documents"
+            }
+        """
+        trace_id = current_trace_id()
+
+        if not self.is_connected():
+            return {
+                "status": "unhealthy",
+                "connected": False,
+                "error": "Storage client not connected"
+            }
+
+        try:
+            if not self._client:
+                raise StorageConnectionError("HTTP client not initialized")
+
+            # Test connection with simple request
+            response = await self._client.get("/")
+
+            # Accept both 200 and 404 as valid responses (404 is ok for root)
+            if response.status_code not in (200, 404):
+                return {
+                    "status": "unhealthy",
+                    "connected": True,
+                    "error": f"Unexpected status code: {response.status_code}"
+                }
+
+            logger.info("Storage health check passed", trace_id=trace_id)
+
+            return {
+                "status": "healthy",
+                "connected": True,
+                "storage_url": self.storage_url,
+                "default_bucket": self.config.default_bucket
+            }
+
+        except Exception as e:
+            logger.error(
+                "Storage health check failed",
+                error=str(e),
+                error_type=type(e).__name__,
+                trace_id=trace_id
+            )
+            return {
+                "status": "unhealthy",
+                "connected": True,
+                "error": str(e)
+            }
+
     async def download_file(
         self,
         bucket: Optional[str],

@@ -12,14 +12,17 @@ dependencies = [
     "uvicorn[standard] (>=0.40.0,<0.41.0)",
     "pydantic (>=2.12.5,<3.0.0)",
     "pydantic-settings (>=2.12.0,<3.0.0)",
-    "pytest (>=9.0.2,<10.0.0)",
+    "pytest (>=8.2.0,<9.0.0)",
+    "pytest-asyncio (>=0.24.0,<0.25.0)",
     "structlog (>=25.5.0,<26.0.0)",
     "python-dotenv (>=1.2.1,<2.0.0)",
     "httpx (>=0.28.1,<0.29.0)",
     "asyncpg (>=0.30.0,<0.31.0)",
     "pyyaml (>=6.0.0,<7.0.0)",
     "psycopg2-binary (>=2.9.0,<3.0.0)",
-    "psycopg[binary] (>=3.3.2,<4.0.0)"
+    "psycopg[binary] (>=3.3.2,<4.0.0)",
+    "langchain (>=0.3.0)",
+    "langchain-openai (>=0.2.0)"
 ]
 
 [tool.poetry]
@@ -30,3 +33,43 @@ packages = [
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+# -------------------------
+# Pytest Configuration
+# -------------------------
+[tool.pytest.ini_options]
+# Async support
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+# Test discovery
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Markers - register custom markers to avoid warnings
+markers = [
+    "unit: Unit tests (isolated, mocked dependencies)",
+    "integration: Integration tests (external dependencies like DB, API)",
+    "e2e: End-to-end tests (full system)",
+    "api: API endpoint tests",
+    "middleware: Middleware tests",
+    "models: Domain model tests",
+    "slow: Slow-running tests",
+    "asyncio: Async tests (handled by pytest-asyncio)",
+]
+
+# Output options
+addopts = [
+    "-v",                     # Verbose output
+    "--tb=short",             # Short traceback format
+    "--strict-markers",       # Raise error on unknown markers
+    "--color=yes",            # Colored output
+]
+
+# Coverage options (when using pytest-cov)
+# Run with: pytest --cov=backend --cov-report=html
+# [tool.coverage.run]
+# source = ["src/backend"]
+# omit = ["*/tests/*", "*/test_*.py"]
