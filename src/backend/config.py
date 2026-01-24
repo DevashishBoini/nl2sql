@@ -13,13 +13,42 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class DatabaseConfig(BaseModel):
     database_url: str
-    database_readonly_url: str
-    database_schema_yaml_path: str
+    default_schema: str = "public"  # Default PostgreSQL schema to use
     connection_timeout_seconds: int = 10
     query_timeout_seconds: int = 30
-    connection_pool_size: int = 5
+
+    # Connection pool settings
+    connection_pool_min_size: int = 1
+    connection_pool_max_size: int = 5
+    connection_pool_max_queries: int = 50000
+    max_cached_statement_lifetime: int = 300
+    max_cacheable_statement_size: int = 15360  # 1024 * 15 bytes
+
+    # Application settings
+    application_name: str = "nl2sql"
+    jit_enabled: bool = False  # PostgreSQL JIT compilation
+
+    # Retry settings
     max_retries: int = 3
     retry_backoff_seconds: float = 2.0
+
+
+class StorageConfig(BaseModel):
+    supabase_url: str  # e.g., https://xxxxx.supabase.co
+    supabase_key: str  # Service role key or anon key
+    default_bucket: str = "descriptions"  # Default storage bucket
+    schema_yaml_path: str = "config/schema_descriptions.yaml"  # Path to schema YAML in storage
+
+    # HTTP timeout settings
+    connect_timeout_seconds: int = 10
+    upload_timeout_seconds: int = 60
+    download_timeout_seconds: int = 60
+    write_timeout_seconds: int = 30
+    pool_timeout_seconds: int = 5
+
+    # Connection pool limits
+    max_connections: int = 100
+    max_keepalive_connections: int = 20
 
 
 class DBQueryConfig(BaseModel):
@@ -82,6 +111,7 @@ class AppConfig(BaseModel):
 
 class Settings(BaseSettings):
     database: DatabaseConfig
+    storage: StorageConfig
     db_query: DBQueryConfig = DBQueryConfig()
     llm: LLMConfig
     embedding: EmbeddingConfig

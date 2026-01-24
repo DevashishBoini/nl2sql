@@ -23,6 +23,7 @@ from .api.middleware import (
 )
 from .config import get_settings
 from .infrastructure.database_client import DatabaseClient
+from .infrastructure.storage_client import StorageClient
 
 
 # Configure logging on module import
@@ -36,10 +37,10 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting NL2SQL API server", version="0.1.0")
 
-    # Initialize database client
     settings = get_settings()
-    db_client = DatabaseClient(settings.database)
 
+    # Initialize database client
+    db_client = DatabaseClient(settings.database)
     try:
         await db_client.connect()
         logger.info("Database client connected successfully")
@@ -47,8 +48,18 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to connect database client: {e}")
         # Continue without database - health check will report status
 
+    # Initialize storage client
+    storage_client = StorageClient(settings.storage)
+    try:
+        await storage_client.connect()
+        logger.info("Storage client connected successfully")
+    except Exception as e:
+        logger.error(f"Failed to connect storage client: {e}")
+        # Continue without storage - health check will report status
+
     # Store in app state for dependency injection
     app.state.db_client = db_client
+    app.state.storage_client = storage_client
 
     yield
 
@@ -59,6 +70,11 @@ async def lifespan(app: FastAPI):
     if hasattr(app.state, "db_client"):
         await app.state.db_client.close()
         logger.info("Database client closed")
+
+    # Close storage connections
+    if hasattr(app.state, "storage_client"):
+        await app.state.storage_client.close()
+        logger.info("Storage client closed")
 
 
 # Create FastAPI application
@@ -115,15 +131,23 @@ async def health() -> HealthResponse:
         db_health = await app.state.db_client.health_check()
         database_status = db_health.get("status", "unknown")
 
+    # Check storage status
+    storage_status = "not_configured"
+    if hasattr(app.state, "storage_client"):
+        storage_health = await app.state.storage_client.health_check()
+        storage_status = storage_health.get("status", "unknown")
+
     # Determine overall status
-    overall_status = "healthy" if database_status == "healthy" else "degraded"
+    overall_status = "healthy" if (
+        database_status == "healthy" and storage_status == "healthy"
+    ) else "degraded"
 
     return HealthResponse(
         status=overall_status,
         timestamp=datetime.now(timezone.utc),
         version="0.1.0",
         database_status=database_status,
-        vector_store_status="not_configured",
+        vector_store_status=storage_status,  # Using storage as vector store indicator
         llm_service_status="not_configured",
         embedding_service_status="not_configured"
     )

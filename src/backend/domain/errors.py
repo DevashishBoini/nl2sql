@@ -52,3 +52,18 @@ class SQLValidationError(NL2SQLException):
 class QueryExecutionError(NL2SQLException):
     """Raised when query execution fails."""
     pass
+
+
+class StorageError(NL2SQLException):
+    """Raised when storage operations fail."""
+    pass
+
+
+class StorageConnectionError(StorageError):
+    """Raised when storage connection fails."""
+    pass
+
+
+class StorageFileError(StorageError):
+    """Raised when file operations fail (download, list, etc.)."""
+    pass

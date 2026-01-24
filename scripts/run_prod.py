@@ -9,14 +9,12 @@ for performance, security, and reliability.
 import os
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
 
-# Add the src directory to the Python path
+# Get project root
 project_root = Path(__file__).parent.parent
-src_path = project_root / "src"
-sys.path.insert(0, str(src_path))
 
 # Load environment variables
-from dotenv import load_dotenv
 
 env_file = project_root / ".env"
 if env_file.exists():
