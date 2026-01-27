@@ -13,16 +13,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .utils.logging import configure_logging, get_module_logger
-from .utils.tracing import current_trace_id
-from .domain.responses import HealthResponse
+from .utils.tracing import current_trace_id, get_trace_id
+from .domain.responses import HealthResponse, SchemaSummaryResponse
 from .api.middleware import (
     trace_id_middleware,
     logging_middleware,
-    security_headers_middleware,
     general_exception_handler
 )
 from .api.dependencies import (
     SettingsDep,
+    SchemaServiceDep,
     OptionalDatabaseClientDep,
     OptionalStorageClientDep,
     OptionalLLMClientDep,
@@ -208,6 +208,39 @@ async def health(
         vector_store_status=storage_status,
         llm_service_status=llm_status,
         embedding_service_status=embedding_status
+    )
+
+
+@app.get("/test-schema", response_model=SchemaSummaryResponse, tags=["Testing"])
+async def test_schema(schema_service: SchemaServiceDep) -> SchemaSummaryResponse:
+    """
+    Test endpoint to fetch schema information using SchemaService.
+
+    Returns complete schema summary including tables, columns, and relationships.
+
+    """
+    trace_id = get_trace_id()
+    logger.info("Test schema endpoint accessed", trace_id=trace_id)
+
+    # Get schema summary via Service layer
+    summary = await schema_service.get_schema_summary()
+
+    logger.info(
+        "Schema summary fetched successfully",
+        table_count=summary["table_count"],
+        relationship_count=summary["relationship_count"],
+        trace_id=trace_id
+    )
+
+    return SchemaSummaryResponse(
+        trace_id=trace_id,
+        schema_name=summary["schema_name"],
+        table_count=summary["table_count"],
+        relationship_count=summary["relationship_count"],
+        tables=summary["tables"],
+        relationships=summary["relationships"],
+        sample_table=summary.get("sample_table"),
+        sample_columns=summary.get("sample_columns", [])
     )
 
 

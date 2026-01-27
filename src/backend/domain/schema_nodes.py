@@ -16,6 +16,7 @@ class TableNode(BaseSchemaNode):
 
     node_type : NodeType = Field(default=NodeType.TABLE, frozen=True, description="should be 'table'")
     table_name : str = Field(..., description="Name of the table")
+    table_type : str = Field(default="BASE TABLE", description="Type of table (e.g., 'BASE TABLE', 'VIEW')")
     schema_name : str = Field(..., description="Schema to which the table belongs")
     description : Optional[str] = Field(default=None, description="Description of the table")
 
@@ -30,6 +31,7 @@ class ColumnNode(BaseSchemaNode):
     description : Optional[str] = Field(default=None, description="Description of the column")
     sample_values : Optional[list[Any]] = Field(default=None, max_length=5, description="Sample values from the column")
 
+    # Constraint flags
     is_primary_key : bool = Field(default=False, description="Indicates if the column is a primary key")
     is_nullable : bool = Field(default=True, description="Indicates if the column can contain null values")
     is_unique : bool = Field(default=False, description="Indicates if the column has unique values")
@@ -39,6 +41,7 @@ class RelationshipNode(BaseSchemaNode):
     """Represents a relationship between two tables."""
 
     node_type : NodeType = Field(default=NodeType.RELATIONSHIP, frozen=True, description="Should be 'relationship'")
+    constraint_name : str = Field(..., description="Name of the foreign key constraint")
     from_table : str = Field(..., description="Name of the source table in the relationship")
     to_table : str = Field(..., description="Name of the target table in the relationship")
     from_column : str = Field(..., description="Column in the source table")

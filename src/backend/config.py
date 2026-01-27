@@ -44,7 +44,7 @@ class StorageConfig(BaseModel):
     supabase_url: str  # e.g., https://xxxxx.supabase.co
     supabase_key: str  # Service role key or anon key
     default_bucket: str = "descriptions"  # Default storage bucket
-    schema_yaml_path: str = "config/schema_descriptions.yaml"  # Path to schema YAML in storage
+    schema_yaml_path: str = "schema_descriptions.yaml"  # Path to schema YAML in storage
 
     # HTTP timeout settings
     connect_timeout_seconds: int = 10

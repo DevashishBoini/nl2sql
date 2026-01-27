@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 from .base_enums import QueryStatus, NodeType
+from .schema_nodes import TableNode, ColumnNode, RelationshipNode
 
 
 class HealthResponse(BaseModel):
@@ -119,4 +120,23 @@ class SchemaIndexResponse(BaseModel):
     errors: Optional[List[str]] = Field(
         default=None,
         description="List of errors encountered during indexing"
+    )
+
+
+class SchemaSummaryResponse(BaseModel):
+    """Response model for schema summary endpoint."""
+
+    trace_id: str = Field(..., description="Unique trace ID for this request")
+    schema_name: str = Field(..., description="Name of the database schema")
+    table_count: int = Field(..., description="Total number of tables in the schema")
+    relationship_count: int = Field(..., description="Total number of foreign key relationships")
+    tables: List[TableNode] = Field(..., description="List of all tables in the schema")
+    relationships: List[RelationshipNode] = Field(..., description="List of all relationships in the schema")
+    sample_table: Optional[str] = Field(
+        default=None,
+        description="Name of the sample table (first table with columns shown)"
+    )
+    sample_columns: List[ColumnNode] = Field(
+        default_factory=list,
+        description="Sample columns from the first table (includes sample values)"
     )
