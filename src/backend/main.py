@@ -33,7 +33,8 @@ from .domain.requests import (
 from .api.middleware import (
     trace_id_middleware,
     logging_middleware,
-    general_exception_handler
+    register_exception_handlers,
+    ERROR_RESPONSES,
 )
 from .api.dependencies import (
     SettingsDep,
@@ -156,14 +157,18 @@ app.add_middleware(
 app.middleware("http")(logging_middleware)
 app.middleware("http")(trace_id_middleware)
 
-# Register exception handlers
-app.exception_handler(Exception)(general_exception_handler)
+# Register all exception handlers (NL2SQLException, ValidationError, HTTPException, etc.)
+register_exception_handlers(app)
 
 
 # API Routes
 @app.get("/", tags=["Root"])
 async def root(settings: SettingsDep) -> Dict[str, Union[str, None]]:
-    """Root endpoint returning basic API information."""
+    """
+    Root endpoint returning basic API information.
+
+    **Response**: Dict with message, version, trace_id, log_level
+    """
 
     trace_id = get_trace_id()
     logger.info("Root endpoint accessed", trace_id=trace_id)
@@ -183,7 +188,13 @@ async def health(
     llm_client: OptionalLLMClientDep,
     embedding_client: OptionalEmbeddingClientDep,
 ) -> HealthResponse:
-    """Health check endpoint with comprehensive system status."""
+    """
+    Health check endpoint with comprehensive system status.
+
+    **Response Model**: `HealthResponse`
+    - status: Overall health (healthy/degraded)
+    - database_status, vector_store_status, llm_service_status, embedding_service_status
+    """
 
     trace_id = get_trace_id()
     logger.info("Health check endpoint accessed", trace_id=trace_id)
@@ -246,6 +257,10 @@ async def test_schema(schema_service: SchemaServiceDep) -> SchemaSummaryResponse
 
     Returns complete schema summary including tables, columns, and relationships.
 
+    **Response Model**: `SchemaSummaryResponse`
+    - schema_name, table_count, relationship_count
+    - tables: List of TableNode
+    - relationships: List of RelationshipNode
     """
     trace_id = get_trace_id()
     logger.info("Test schema endpoint accessed", trace_id=trace_id)
@@ -276,7 +291,14 @@ async def test_schema(schema_service: SchemaServiceDep) -> SchemaSummaryResponse
 # Vector Store Endpoints
 # -------------------------
 
-@app.post("/api/v1/schema/index", response_model=IndexSchemaResponse, tags=["Schema Indexing"])
+@app.post(
+    "/api/v1/schema/index",
+    response_model=IndexSchemaResponse,
+    tags=["Schema Indexing"],
+    responses={
+        **{k: v for k, v in ERROR_RESPONSES.items() if k in [422, 500, 503]},
+    },
+)
 async def index_schema(
     vector_service: VectorServiceDep,
     settings: SettingsDep,
@@ -289,8 +311,20 @@ async def index_schema(
     from the specified PostgreSQL schema, transforms them into embeddings,
     and stores them in the vector store.
 
+    **Request Model**: `IndexSchemaRequest`
+    - schema_name: PostgreSQL schema to index (default: from config)
+    - replace_existing: If True, delete existing embeddings first
+
+    **Response Model**: `IndexSchemaResponse`
+    - tables_indexed, columns_indexed, relationships_indexed, total_documents
+
     **Admin operation**: This endpoint should be called after schema changes
     or when setting up the system for the first time.
+
+    **Possible Errors**:
+    - 422: Invalid request parameters
+    - 500: Schema extraction or embedding generation failed
+    - 503: Database or embedding service unavailable
     """
     trace_id = get_trace_id()
 
@@ -330,7 +364,14 @@ async def index_schema(
     )
 
 
-@app.post("/api/v1/schema/search", response_model=VectorSchemaSearchResponse, tags=["Schema Retrieval"])
+@app.post(
+    "/api/v1/schema/search",
+    response_model=VectorSchemaSearchResponse,
+    tags=["Schema Retrieval"],
+    responses={
+        **{k: v for k, v in ERROR_RESPONSES.items() if k in [422, 500, 503]},
+    },
+)
 async def search_schema(
     request: SchemaSearchRequest,
     vector_service: VectorServiceDep,
@@ -342,8 +383,23 @@ async def search_schema(
     This endpoint performs vector similarity search on indexed schema elements,
     returning the most relevant tables, columns, and relationships for a given query.
 
+    **Request Model**: `SchemaSearchRequest`
+    - query: Natural language search query (required)
+    - top_k: Number of results to return (default: from config)
+    - node_types: Filter by node type ["table", "column", "relationship"]
+    - min_similarity: Minimum similarity threshold (0.0-1.0)
+
+    **Response Model**: `VectorSchemaSearchResponse`
+    - results: List of SchemaSearchResult with content, metadata, similarity_score
+    - result_count: Number of results returned
+
     **Debugging endpoint**: Useful for testing RAG retrieval quality and understanding
     which schema elements are retrieved for specific queries.
+
+    **Possible Errors**:
+    - 422: Invalid query or search parameters
+    - 500: Embedding or search operation failed
+    - 503: Vector store or embedding service unavailable
     """
     trace_id = get_trace_id()
 
@@ -401,6 +457,11 @@ async def get_vector_stats(
 
     Returns counts of indexed documents by type and schema.
     Useful for monitoring and verifying indexing operations.
+
+    **Response Model**: `VectorStatsResponse`
+    - total_documents: Total number of indexed vectors
+    - node_type_counts: Dict mapping node_type -> count
+    - schema_counts: Dict mapping schema_name -> count
     """
     trace_id = get_trace_id()
     logger.info("Vector stats requested", trace_id=trace_id)
@@ -422,7 +483,14 @@ async def get_vector_stats(
     )
 
 
-@app.delete("/api/v1/vector/collection", response_model=DropCollectionResponse, tags=["Vector Store Admin"])
+@app.delete(
+    "/api/v1/vector/collection",
+    response_model=DropCollectionResponse,
+    tags=["Vector Store Admin"],
+    responses={
+        **{k: v for k, v in ERROR_RESPONSES.items() if k in [400, 422, 500, 503]},
+    },
+)
 async def drop_vector_collection(
     request: DropCollectionRequest,
     vector_service: VectorServiceDep
@@ -432,7 +500,16 @@ async def drop_vector_collection(
 
     **DESTRUCTIVE ADMIN OPERATION**: This permanently deletes the vector store data.
 
-    Options:
+    **Request Model**: `DropCollectionRequest`
+    - confirm: Must be True to proceed (safety check)
+    - drop_table: If True, drop entire table; if False, drop only HNSW index
+
+    **Response Model**: `DropCollectionResponse`
+    - success: Boolean indicating operation success
+    - action: Description of action taken ("dropped_table" or "dropped_index")
+    - table_name, index_name, indexes_dropped
+
+    **Options**:
     - `drop_table=True`: Drops the entire `schema_embeddings` table, including all indexes (CASCADE)
     - `drop_table=False`: Drops only the HNSW index, keeping the table and data
 
@@ -445,16 +522,26 @@ async def drop_vector_collection(
     - During development/testing
 
     **Warning**: After dropping the table, you must call `POST /api/v1/schema/index` to rebuild.
+
+    **Possible Errors**:
+    - 400: Missing confirmation (confirm=true required)
+    - 422: Invalid request parameters
+    - 500: Database operation failed
+    - 503: Database service unavailable
     """
     trace_id = get_trace_id()
 
-    # Safety check
+    # Safety check - require explicit confirmation
     if not request.confirm:
+        from .domain.errors import BadRequestError
         logger.warning(
             "Drop collection attempted without confirmation",
             trace_id=trace_id
         )
-        raise ValueError("Must set confirm=true to drop collection")
+        raise BadRequestError(
+            message="Must set confirm=true to drop collection",
+            details={"field": "confirm", "required_value": True}
+        )
 
     logger.info(
         "Drop collection requested",
@@ -485,7 +572,14 @@ async def drop_vector_collection(
 # NL2SQL Query Endpoint
 # -------------------------
 
-@app.post("/nl2sql/query", response_model=NL2SQLQueryResponse, tags=["NL2SQL"])
+@app.post(
+    "/nl2sql/query",
+    response_model=NL2SQLQueryResponse,
+    tags=["NL2SQL"],
+    responses={
+        **{k: v for k, v in ERROR_RESPONSES.items() if k in [400, 422, 429, 500, 503]},
+    },
+)
 async def nl2sql_query(
     request: NL2SQLQueryRequest,
     nl2sql_service: NL2SQLServiceDep,
@@ -503,6 +597,20 @@ async def nl2sql_query(
     5. **Validation**: Static checks + EXPLAIN validation
     6. **Execution**: Read-only SQL execution
 
+    **Request Model**: `NL2SQLQueryRequest`
+    - query: Natural language question (required)
+    - schema_name: PostgreSQL schema to query (default: "public")
+    - limit: Maximum rows to return (capped by config max_row_limit)
+    - timeout_seconds: SQL execution timeout
+
+    **Response Model**: `NL2SQLQueryResponse`
+    - status: QueryStatus (completed/failed)
+    - sql: Generated SQL query (if successful)
+    - results: QueryExecutionResult with rows, column_names, row_count
+    - grounding: SchemaGrounding (tables, columns, relationships used)
+    - provenance: SchemaProvenance (retrieved_nodes, validation_steps, retries)
+    - error_message, error_step: Details if failed
+
     **Key Safety Features**:
     - SELECT queries only (no INSERT/UPDATE/DELETE/DDL)
     - Read-only database connection
@@ -510,9 +618,12 @@ async def nl2sql_query(
     - SQL validation before execution
     - Retry loop with error feedback
 
-    **Response includes**:
-    - `grounding`: Schema elements used (tables, columns, relationships)
-    - `provenance`: Full audit trail (retrieved nodes, validation steps, retries)
+    **Possible Errors**:
+    - 400: Invalid query format or empty query
+    - 422: SQL validation failed (unsafe SQL, syntax error)
+    - 429: LLM rate limit exceeded
+    - 500: SQL generation failed after retries
+    - 503: Database, LLM, or embedding service unavailable
     """
     trace_id = get_trace_id()
 

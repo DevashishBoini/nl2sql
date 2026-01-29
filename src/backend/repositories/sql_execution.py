@@ -1,7 +1,43 @@
 """
 SQL Execution Repository.
 
-Handles safe execution of validated SQL queries.
+This repository handles the final step of the NL2SQL pipeline: executing
+validated SQL queries against the database with strict safety constraints.
+
+Safety Features:
+- Read-only enforcement: All queries run with read_only=True flag
+- Timeout protection: Configurable query timeout (default 30s)
+- Row limiting: Results capped at requested row_limit
+- Schema isolation: Queries execute within specified schema context
+
+Architecture Notes:
+- This is a REPOSITORY (data access layer)
+- Only executes SQL that has passed validation (SQLValidationRepository)
+- Uses injected DatabaseClient for connection management
+- Returns structured QueryExecutionResult with metadata
+
+Execution Flow:
+1. Receive validated SQL from service layer
+2. Acquire read-only connection from pool
+3. Set statement timeout
+4. Execute query with schema context
+5. Convert results to list of dicts
+6. Return QueryExecutionResult with row_count, execution_time, etc.
+
+Usage:
+    repo = SQLExecutionRepository(db_client)
+    result = await repo.execute(
+        sql="SELECT * FROM customer LIMIT 10",
+        schema="public",
+        timeout_seconds=30,
+        row_limit=100
+    )
+    print(f"Returned {result.row_count} rows in {result.execution_time_ms}ms")
+
+Error Handling:
+- Raises Exception on execution failure (caught by service layer)
+- Errors include SQL context for debugging
+- Timeout errors clearly identified
 """
 
 from datetime import datetime, timezone

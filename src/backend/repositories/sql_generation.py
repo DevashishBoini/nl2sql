@@ -1,10 +1,40 @@
 """
 SQL Generation Repository.
 
-Handles LLM-based SQL generation:
-- Prompt building with schema context
-- LLM interaction
-- Response parsing
+This repository handles LLM-based SQL generation for the NL2SQL pipeline.
+
+Responsibilities:
+- Building structured prompts with schema context (tables, columns, relationships)
+- Calling the LLM client with appropriate settings (JSON mode, temperature)
+- Parsing LLM responses into structured LLMGenerationResult
+- Supporting retry logic with error feedback from previous attempts
+
+Architecture Notes:
+- This is a REPOSITORY (data access layer), not a service
+- All LLM interaction goes through the injected LLMClient
+- Prompt engineering is encapsulated in _build_prompt()
+- The service layer (NL2SQLService) handles orchestration and retry loops
+
+Prompt Strategy:
+- Strict JSON response format (success/sql or success/reason)
+- Schema context includes ONLY filtered tables/columns (not entire schema)
+- Relationships provided for JOIN guidance
+- Rules enforce PostgreSQL dialect, LIMIT caps, no dangerous operations
+- On retry, previous SQL and error message included for self-correction
+
+Example:
+    repo = SQLGenerationRepository(llm_client, config)
+    result = await repo.generate_sql(
+        user_query="Show top customers",
+        tables=[...],
+        columns=[...],
+        relationships=[...],
+        row_limit=100
+    )
+    if result.success:
+        print(result.sql)
+    else:
+        print(result.reason)
 """
 
 from typing import List, Optional

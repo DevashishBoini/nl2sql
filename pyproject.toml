@@ -1,7 +1,8 @@
 [project]
 name = "nl2sql"
 version = "0.1.0"
-description = ""
+description = "Natural Language to SQL conversion system with semantic schema retrieval"
+license = "MIT"
 authors = [
     {name = "Boini Devashish",email = "bdevashish957@gmail.com"}
 ]

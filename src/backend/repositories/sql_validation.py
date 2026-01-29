@@ -1,11 +1,43 @@
 """
 SQL Validation Repository.
 
-Handles SQL validation:
-- Static safety checks (SELECT-only)
-- Dangerous keyword detection
-- Allowed tables/columns check
-- Syntax validation via EXPLAIN
+This repository provides comprehensive SQL validation for the NL2SQL pipeline,
+ensuring generated SQL is safe and correct before execution.
+
+Validation Checks (in order):
+1. SELECT-Only Check: Ensures query starts with SELECT
+2. Dangerous Keywords Check: Blocks INSERT, UPDATE, DELETE, DROP, ALTER, etc.
+3. Allowed Tables Check: Validates only context tables are used
+4. Syntax Check: Uses EXPLAIN to validate SQL syntax against real database
+
+Security Philosophy:
+- Defense in depth: Multiple validation layers
+- Fail-fast: First failing check returns immediately
+- Explicit allowlist: Only tables from schema retrieval can be used
+- No trusted input: All LLM-generated SQL is treated as untrusted
+
+Architecture Notes:
+- This is a REPOSITORY (data access layer)
+- EXPLAIN validation requires database connection (injected DatabaseClient)
+- Static checks are pure functions (no I/O)
+- Returns ValidationStep with pass/fail status and diagnostic message
+
+Usage in Pipeline:
+    repo = SQLValidationRepository(db_client)
+    result = await repo.validate(
+        sql="SELECT * FROM customer LIMIT 10",
+        tables=filtered_tables,
+        columns=filtered_columns
+    )
+    if result.passed:
+        # Safe to execute
+    else:
+        # Use result.message for retry feedback
+
+Error Handling:
+- ValidationStep.passed=False does NOT raise exceptions
+- Exceptions only for infrastructure failures (DB connection, etc.)
+- Error messages designed for LLM feedback (human-readable)
 """
 
 import re
