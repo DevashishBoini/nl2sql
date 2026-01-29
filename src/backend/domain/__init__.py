@@ -22,9 +22,12 @@ from .responses import (
     SchemaIndexResponse,
     QueryExecutionResult,
     SchemaNodeResult,
-    IndexedSchemaStats
+    IndexedSchemaStats,
+    LLMGenerationResult,
 )
 from .query_trace import QueryTrace, PipelineStep
+from .pipeline import PipelineState
+from .types import TableColumnsMap, TableScoresMap, TableDescriptionsMap
 
 __all__ = [
     # Enums
@@ -54,8 +57,17 @@ __all__ = [
     "QueryExecutionResult",
     "SchemaNodeResult",
     "IndexedSchemaStats",
+    "LLMGenerationResult",
 
     # Tracing
     "QueryTrace",
-    "PipelineStep"
+    "PipelineStep",
+
+    # Pipeline
+    "PipelineState",
+
+    # Type Aliases
+    "TableColumnsMap",
+    "TableScoresMap",
+    "TableDescriptionsMap",
 ]

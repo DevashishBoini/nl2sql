@@ -79,6 +79,30 @@ class SchemaIndexingConfig(BaseModel):
 
 
 # -------------------------
+# NL2SQL Pipeline
+# -------------------------
+
+class NL2SQLConfig(BaseModel):
+    """Configuration for NL2SQL query pipeline."""
+
+    # Retrieval settings
+    retrieval_top_k: int = 12  # Number of schema nodes to retrieve (columns + relationships)
+
+    # Filtering hard caps (deterministic limits)
+    max_tables: int = 6       # Max tables allowed in query (supports complex joins)
+    max_columns: int = 15     # Max columns allowed in query (includes FK columns)
+    max_relationships: int = 6  # Max FK relationships (for multi-table joins)
+
+    # SQL generation retry settings
+    max_retries: int = 2  # Max retry attempts on validation failure
+
+    # Execution settings
+    default_row_limit: int = 100    # Default LIMIT for SQL queries
+    max_row_limit: int = 1000       # Maximum allowed LIMIT
+    query_timeout_seconds: int = 30  # SQL execution timeout
+
+
+# -------------------------
 # LLM / Embeddings
 # -------------------------
 
@@ -89,6 +113,9 @@ class LLMConfig(BaseModel):
     top_p: float = 0.1
     max_tokens: int = 2048
     max_input_chars: int = 50000  # Max characters for LLM input (prompts + system prompts)
+
+    # Response format settings
+    json_mode: bool = True  # Enforce JSON response format (recommended for structured output)
 
     # OpenRouter API settings
     base_url: str = OPEN_ROUTER_API_URL
@@ -167,6 +194,7 @@ class Settings(BaseSettings):
     storage: StorageConfig
     db_query: DBQueryConfig = DBQueryConfig()
     schema_indexing: SchemaIndexingConfig = SchemaIndexingConfig()
+    nl2sql: NL2SQLConfig = NL2SQLConfig()
     llm: LLMConfig
     embedding: EmbeddingConfig
     retrieval: RetrievalConfig = RetrievalConfig()

@@ -132,7 +132,8 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        json_mode: bool = False,
     ) -> str:
         """
         Generate text response from LLM.
@@ -143,6 +144,7 @@ class LLMClient:
             temperature: Optional temperature override (0.0-1.0)
             max_tokens: Optional max tokens override
             model: Optional model override
+            json_mode: If True, enforce JSON response format (requires "JSON" in prompt)
 
         Returns:
             Generated text response
@@ -160,11 +162,10 @@ class LLMClient:
                 system_prompt="You are a technical poet."
             )
 
-            # Override settings
+            # JSON mode for structured output
             response = await client.generate(
-                "Tell me a story",
-                temperature=0.8,
-                max_tokens=500
+                "Return a JSON object with name and age",
+                json_mode=True
             )
         """
         if not self.is_connected():
@@ -206,7 +207,7 @@ class LLMClient:
             llm = self._llm
 
             # If any parameters need override, use bind() to create modified client
-            if model is not None or temperature is not None or max_tokens is not None:
+            if model is not None or temperature is not None or max_tokens is not None or json_mode:
                 bind_kwargs = {}
                 if model is not None:
                     bind_kwargs["model"] = model
@@ -214,6 +215,10 @@ class LLMClient:
                     bind_kwargs["temperature"] = temperature
                 if max_tokens is not None:
                     bind_kwargs["max_completion_tokens"] = max_tokens
+                if json_mode:
+                    # OpenAI/OpenRouter JSON mode - enforces valid JSON output
+                    # Note: Prompt MUST mention "JSON" for this to work
+                    bind_kwargs["response_format"] = {"type": "json_object"}
                 llm = llm.bind(**bind_kwargs)
 
             # Generate response

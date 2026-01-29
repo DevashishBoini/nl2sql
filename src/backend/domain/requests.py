@@ -17,7 +17,6 @@ class QueryRequest(BaseModel):
         default=None,
         description="Maximum number of results to return",
         ge=1,
-        le=1000
     )
     include_execution_plan: bool = Field(
         default=False,
@@ -92,4 +91,34 @@ class DropCollectionRequest(BaseModel):
     confirm: bool = Field(
         ...,
         description="Must be set to True to confirm deletion (safety check)"
+    )
+
+
+# -------------------------
+# NL2SQL Query Models
+# -------------------------
+
+class NL2SQLQueryRequest(BaseModel):
+    """Request model for NL2SQL query endpoint."""
+
+    query: str = Field(
+        ...,
+        description="Natural language query to convert to SQL",
+        min_length=1,
+        max_length=2000
+    )
+    limit: Optional[int] = Field(
+        default=100,
+        description="Maximum number of rows to return from SQL execution",
+        ge=1
+    )
+    timeout_seconds: Optional[int] = Field(
+        default=30,
+        description="SQL execution timeout in seconds",
+        ge=1,
+        le=60
+    )
+    schema_name: Optional[str] = Field(
+        default="public",
+        description="PostgreSQL schema to query"
     )

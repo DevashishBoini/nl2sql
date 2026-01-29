@@ -457,6 +457,118 @@ class VectorRepository:
             )
             raise VectorStoreError(f"Failed to search similar vectors: {e}") from e
 
+    async def get_by_exact_match(
+        self,
+        filters: Dict[str, Any],
+        limit: int = 10,
+    ) -> List[VectorSearchResult]:
+        """
+        Get nodes by exact metadata match (deterministic, no embeddings).
+
+        This is a direct SQL lookup - no vector similarity involved.
+        Use for deterministic retrieval like fetching table descriptions
+        or columns by exact table_name.
+
+        Args:
+            filters: Exact match filters (e.g., {"node_type": "table", "table_name": "film"})
+            limit: Maximum number of results
+
+        Returns:
+            List of VectorSearchResult objects (similarity_score will be 1.0)
+
+        Raises:
+            VectorStoreError: If query fails
+        """
+        trace_id = current_trace_id()
+
+        if not filters:
+            raise VectorStoreError("At least one filter is required for exact match")
+
+        # Ensure setup is done
+        await self.ensure_setup()
+
+        logger.debug(
+            "Fetching by exact match",
+            filters=filters,
+            limit=limit,
+            trace_id=trace_id,
+        )
+
+        try:
+            # Build WHERE clause for exact match filters
+            where_clauses = []
+            params = []
+            param_idx = 1
+
+            for key, value in filters.items():
+                where_clauses.append(f"{key} = ${param_idx}")
+                params.append(value)
+                param_idx += 1
+
+            where_sql = " AND ".join(where_clauses)
+
+            sql = f"""
+                SELECT
+                    id::text,
+                    content,
+                    node_type,
+                    schema_name,
+                    table_name,
+                    column_name,
+                    constraint_name,
+                    metadata
+                FROM {self.config.table_name}
+                WHERE {where_sql}
+                LIMIT {limit};
+            """
+
+            async with self.db.acquire_connection() as conn:
+                rows = await conn.fetch(sql, *params)
+
+            # Convert to VectorSearchResult (similarity=1.0 for exact match)
+            results: List[VectorSearchResult] = []
+            for row in rows:
+                metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+
+                # Add structured fields to metadata
+                if "node_type" not in metadata and row["node_type"]:
+                    metadata["node_type"] = row["node_type"]
+                if "schema_name" not in metadata and row["schema_name"]:
+                    metadata["schema_name"] = row["schema_name"]
+                if "table_name" not in metadata and row["table_name"]:
+                    metadata["table_name"] = row["table_name"]
+                if "column_name" not in metadata and row["column_name"]:
+                    metadata["column_name"] = row["column_name"]
+                if "constraint_name" not in metadata and row["constraint_name"]:
+                    metadata["constraint_name"] = row["constraint_name"]
+
+                results.append(
+                    VectorSearchResult(
+                        content=row["content"],
+                        metadata=metadata,
+                        similarity_score=1.0,  # Exact match
+                    )
+                )
+
+            logger.debug(
+                "Exact match results",
+                count=len(results),
+                trace_id=trace_id,
+            )
+
+            return results
+
+        except VectorStoreError:
+            raise
+        except Exception as e:
+            logger.error(
+                "Failed to fetch by exact match",
+                error=str(e),
+                trace_id=trace_id,
+                exc_info=True,
+            )
+            raise VectorStoreError(f"Failed to fetch by exact match: {e}") from e
+
     async def drop_collection(self, drop_table: bool = True) -> Dict[str, Any]:
         """
         Drop vector collection.

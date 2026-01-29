@@ -5,11 +5,16 @@ These models define the structure for all outgoing API responses,
 ensuring consistent response formats and type safety.
 """
 
-from pydantic import BaseModel, Field
-from typing import Any, Dict, List, Optional
+import json
+import logging
+import re
+from pydantic import BaseModel, Field, model_validator
+from typing import Any, Dict, List, Optional, Self
 from datetime import datetime
 from .base_enums import QueryStatus, NodeType
 from .schema_nodes import TableNode, ColumnNode, RelationshipNode
+
+logger = logging.getLogger(__name__)
 
 
 class HealthResponse(BaseModel):
@@ -48,6 +53,176 @@ class QueryExecutionResult(BaseModel):
     row_count: int = Field(..., description="Number of rows returned")
     execution_time_ms: float = Field(..., description="Query execution time in milliseconds")
     was_limited: bool = Field(..., description="Whether results were limited due to row limit")
+
+
+class LLMGenerationResult(BaseModel):
+    """
+    Result of LLM SQL generation attempt.
+
+    Represents the parsed response from the LLM, indicating whether
+    SQL generation was successful or failed with a reason.
+    """
+
+    success: bool = Field(..., description="Whether SQL generation succeeded")
+    sql: Optional[str] = Field(default=None, description="Generated SQL (if success=True)")
+    reason: Optional[str] = Field(default=None, description="Failure reason (if success=False)")
+
+    @model_validator(mode="after")
+    def validate_result(self) -> Self:
+        """Validate that successful results have SQL and failed results have reason."""
+        if self.success and not self.sql:
+            # Allow success=True with no SQL only if explicitly set
+            pass  # Will be caught in generation retry loop
+        return self
+
+    @classmethod
+    def from_llm_response(cls, response: str) -> "LLMGenerationResult":
+        """
+        Parse LLM response string into result object.
+
+        Handles:
+        - Empty/whitespace response: returns failure with clear message
+        - JSON format: {"success": true, "sql": "..."} or {"success": false, "reason": "..."}
+        - Markdown-wrapped JSON: ```json ... ```
+        - Raw SQL fallback: SELECT ... (treated as success)
+
+        Args:
+            response: Raw LLM response string
+
+        Returns:
+            LLMGenerationResult with parsed data
+        """
+        # Handle empty or whitespace-only responses
+        if not response or not response.strip():
+            logger.warning("LLM returned empty response")
+            return cls(
+                success=False,
+                reason="LLM returned empty response - may indicate rate limiting or model unavailability"
+            )
+
+        # Initialize cleaned before try block to satisfy type checker
+        cleaned: str = ""
+
+        try:
+            cleaned = cls._strip_markdown(response)
+
+            # Check if cleaned content is empty (e.g., just markdown fences with no content)
+            if not cleaned:
+                logger.warning("LLM response contained only markdown fences with no content")
+                return cls(
+                    success=False,
+                    reason="LLM response was empty after removing markdown formatting"
+                )
+
+            # Try direct JSON parsing first
+            try:
+                data = json.loads(cleaned)
+                return cls(
+                    success=data.get("success", False),
+                    sql=data.get("sql"),
+                    reason=data.get("reason"),
+                )
+            except json.JSONDecodeError:
+                # Try to extract JSON object from the response
+                json_obj = cls._extract_json_object(cleaned)
+                if json_obj:
+                    return cls(
+                        success=json_obj.get("success", False),
+                        sql=json_obj.get("sql"),
+                        reason=json_obj.get("reason"),
+                    )
+                raise  # Re-raise to fall through to raw SQL extraction
+
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "Failed to parse LLM response as JSON, attempting raw SQL extraction",
+                extra={"error": str(e), "cleaned_preview": cleaned[:200] if cleaned else ""},
+            )
+            sql = cls._extract_raw_sql(response)
+            if sql:
+                return cls(success=True, sql=sql)
+
+            # Provide more helpful error message with cleaned content
+            preview = cleaned[:150] if cleaned else response[:150] if response else "(empty)"
+            return cls(
+                success=False,
+                reason=f"LLM response was not valid JSON or SQL. Preview: {preview}"
+            )
+
+    @staticmethod
+    def _strip_markdown(text: str) -> str:
+        """
+        Strip markdown code fence from text.
+
+        Handles various formats:
+        - ```json\n{...}\n```
+        - ```\n{...}\n```
+        - ``` json\n{...}```
+        - Mixed whitespace and newlines
+        """
+        cleaned = text.strip()
+
+        # Use regex to handle various markdown fence formats
+        # Pattern matches: ```json or ``` followed by optional whitespace/newline
+        # and captures the content until closing ```
+        markdown_pattern = re.compile(
+            r'^```(?:json)?\s*\n?(.*?)\n?```$',
+            re.DOTALL | re.IGNORECASE
+        )
+
+        match = markdown_pattern.match(cleaned)
+        if match:
+            return match.group(1).strip()
+
+        # Fallback: manual stripping for edge cases
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        elif cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+
+        return cleaned.strip()
+
+    @staticmethod
+    def _extract_json_object(text: str) -> Optional[Dict[str, Any]]:
+        """
+        Try to extract a JSON object from text that may contain extra content.
+
+        Finds the first { and last } and tries to parse what's between.
+        """
+        # Find the first { and last }
+        start = text.find('{')
+        end = text.rfind('}')
+
+        if start == -1 or end == -1 or end <= start:
+            return None
+
+        json_str = text[start:end + 1]
+
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            return None
+
+    @staticmethod
+    def _extract_raw_sql(response: str) -> Optional[str]:
+        """Fallback: extract SQL from non-JSON response."""
+        sql = response.strip()
+
+        if sql.startswith("```sql"):
+            sql = sql[6:]
+        elif sql.startswith("```"):
+            sql = sql[3:]
+        if sql.endswith("```"):
+            sql = sql[:-3]
+
+        sql = sql.strip()
+
+        if sql.upper().startswith("SELECT"):
+            return sql
+        return None
 
 
 class QueryResponse(BaseModel):
@@ -236,3 +411,143 @@ class VectorCollectionStats(BaseModel):
     total_documents: int = Field(..., description="Total documents in vector store")
     node_type_counts: Dict[str, int] = Field(..., description="Document counts by node type")
     schema_counts: Dict[str, int] = Field(..., description="Document counts by schema")
+
+
+# -------------------------
+# NL2SQL Response Models
+# -------------------------
+
+class RetrievedNode(BaseModel):
+    """A schema node retrieved from vector search."""
+
+    node_type: NodeType = Field(..., description="Type of node (column, relationship, table)")
+    content: str = Field(..., description="Node content used for embedding")
+    table_name: Optional[str] = Field(None, description="Table name")
+    column_name: Optional[str] = Field(None, description="Column name (for column nodes)")
+    similarity_score: float = Field(..., description="Similarity score from vector search")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Full node metadata")
+
+
+class FilteredColumn(BaseModel):
+    """A column selected after deterministic filtering."""
+
+    table_name: str = Field(..., description="Table containing the column")
+    column_name: str = Field(..., description="Column name")
+    data_type: str = Field(..., description="PostgreSQL data type")
+    description: Optional[str] = Field(None, description="Column description")
+    is_primary_key: bool = Field(default=False, description="Whether column is primary key")
+    is_foreign_key: bool = Field(default=False, description="Whether column is foreign key")
+
+
+class FilteredRelationship(BaseModel):
+    """A relationship (FK) selected after deterministic filtering."""
+
+    from_table: str = Field(..., description="Source table (child with FK)")
+    from_column: str = Field(..., description="Column in source table")
+    to_table: str = Field(..., description="Target table (parent with PK)")
+    to_column: str = Field(..., description="Column in target table")
+    constraint_name: Optional[str] = Field(None, description="FK constraint name")
+
+
+class FilteredTable(BaseModel):
+    """A table derived from filtered columns."""
+
+    table_name: str = Field(..., description="Table name")
+    description: Optional[str] = Field(None, description="Table description")
+    column_count: int = Field(..., description="Number of columns selected from this table")
+
+
+class SchemaGrounding(BaseModel):
+    """
+    Grounding information showing exactly which schema elements were used.
+
+    This provides transparency into what the LLM was allowed to use.
+    """
+
+    tables: List[FilteredTable] = Field(
+        default_factory=list,
+        description="Tables derived from selected columns"
+    )
+    columns: List[FilteredColumn] = Field(
+        default_factory=list,
+        description="Columns selected for SQL generation"
+    )
+    relationships: List[FilteredRelationship] = Field(
+        default_factory=list,
+        description="FK relationships between selected tables"
+    )
+
+
+class ValidationStep(BaseModel):
+    """A single validation step result."""
+
+    step_name: str = Field(..., description="Name of validation step")
+    passed: bool = Field(..., description="Whether validation passed")
+    message: Optional[str] = Field(None, description="Validation message or error")
+    sql_attempted: Optional[str] = Field(None, description="SQL that was validated")
+
+
+class SchemaProvenance(BaseModel):
+    """
+    Provenance information tracking the full pipeline execution.
+
+    This provides auditability and debugging information.
+    Note: filtered_schema is available at the top-level 'grounding' field.
+    """
+
+    retrieved_nodes: List[RetrievedNode] = Field(
+        default_factory=list,
+        description="Raw nodes retrieved from vector search (before filtering)"
+    )
+    validation_steps: List[ValidationStep] = Field(
+        default_factory=list,
+        description="Validation steps executed"
+    )
+    retries: int = Field(default=0, description="Number of SQL generation retries")
+
+
+class NL2SQLQueryResponse(BaseModel):
+    """Response model for NL2SQL query endpoint."""
+
+    trace_id: str = Field(..., description="Unique trace ID for this request")
+    status: QueryStatus = Field(..., description="Query execution status")
+
+    # Original query
+    query: str = Field(..., description="Original natural language query from user")
+
+    # The generated SQL
+    sql: Optional[str] = Field(
+        None,
+        description="Final generated SQL query (if successful)"
+    )
+
+    # Execution results
+    results: Optional[QueryExecutionResult] = Field(
+        None,
+        description="SQL execution results (if successful)"
+    )
+
+    # Error information
+    error_message: Optional[str] = Field(
+        None,
+        description="Error message if query failed"
+    )
+    error_step: Optional[str] = Field(
+        None,
+        description="Pipeline step where error occurred"
+    )
+
+    # Grounding: What schema elements were used
+    grounding: SchemaGrounding = Field(
+        default_factory=SchemaGrounding,
+        description="Schema elements used for SQL generation"
+    )
+
+    # Provenance: Full audit trail
+    provenance: SchemaProvenance = Field(
+        default_factory=SchemaProvenance,
+        description="Full provenance of pipeline execution"
+    )
+
+    # Timing
+    total_time_ms: float = Field(..., description="Total request processing time in milliseconds")

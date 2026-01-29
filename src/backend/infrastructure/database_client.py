@@ -299,7 +299,8 @@ class DatabaseClient:
         query: str,
         params: Optional[List[Any]] = None,
         timeout: Optional[int] = None,
-        schema: Optional[str] = None
+        schema: Optional[str] = None,
+        read_only: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         """
         Execute a SQL query and return results as list of dictionaries.
@@ -309,18 +310,21 @@ class DatabaseClient:
             params: Optional query parameters
             timeout: Optional query timeout in seconds
             schema: Optional schema to execute query in
+            read_only: Optional read-only flag. If None, uses config default.
+                      If True, enforces read-only transaction. If False, allows writes.
 
         Returns:
             List of dictionaries containing query results
 
         Example:
-            # Use default schema
+            # Use default schema with read-only (config default)
             results = await client.execute_query("SELECT * FROM users")
 
-            # Use specific schema
+            # Explicit read-only for user queries
             results = await client.execute_query(
                 "SELECT * FROM products",
-                schema="inventory"
+                schema="inventory",
+                read_only=True
             )
         """
         if not self.is_connected():
@@ -341,7 +345,7 @@ class DatabaseClient:
         )
 
         try:
-            async with self.acquire_connection(schema=schema) as conn:
+            async with self.acquire_connection(schema=schema, read_only=read_only) as conn:
                 # Set statement timeout if specified
                 if timeout:
                     await conn.execute(f"SET statement_timeout = {timeout * 1000}")

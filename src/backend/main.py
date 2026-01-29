@@ -21,9 +21,15 @@ from .domain.responses import (
     VectorSchemaSearchResponse,
     VectorStatsResponse,
     SchemaSearchResult,
-    DropCollectionResponse
+    DropCollectionResponse,
+    NL2SQLQueryResponse,
 )
-from .domain.requests import IndexSchemaRequest, SchemaSearchRequest, DropCollectionRequest
+from .domain.requests import (
+    IndexSchemaRequest,
+    SchemaSearchRequest,
+    DropCollectionRequest,
+    NL2SQLQueryRequest,
+)
 from .api.middleware import (
     trace_id_middleware,
     logging_middleware,
@@ -33,6 +39,7 @@ from .api.dependencies import (
     SettingsDep,
     SchemaServiceDep,
     VectorServiceDep,
+    NL2SQLServiceDep,
     OptionalDatabaseClientDep,
     OptionalStorageClientDep,
     OptionalLLMClientDep,
@@ -472,6 +479,75 @@ async def drop_vector_collection(
         index_name=result.index_name,
         indexes_dropped=result.indexes_dropped,
     )
+
+
+# -------------------------
+# NL2SQL Query Endpoint
+# -------------------------
+
+@app.post("/nl2sql/query", response_model=NL2SQLQueryResponse, tags=["NL2SQL"])
+async def nl2sql_query(
+    request: NL2SQLQueryRequest,
+    nl2sql_service: NL2SQLServiceDep,
+    settings: SettingsDep,
+) -> NL2SQLQueryResponse:
+    """
+    Convert natural language query to SQL and execute it.
+
+    This endpoint implements a production-safe NL2SQL pipeline:
+
+    1. **Retrieval**: Vector search for relevant columns and relationships
+    2. **Filtering**: Deterministic filtering (code-based, not LLM)
+    3. **Context**: Attach table descriptions
+    4. **Generation**: Single LLM call for SQL generation
+    5. **Validation**: Static checks + EXPLAIN validation
+    6. **Execution**: Read-only SQL execution
+
+    **Key Safety Features**:
+    - SELECT queries only (no INSERT/UPDATE/DELETE/DDL)
+    - Read-only database connection
+    - Hard caps on tables/columns/relationships
+    - SQL validation before execution
+    - Retry loop with error feedback
+
+    **Response includes**:
+    - `grounding`: Schema elements used (tables, columns, relationships)
+    - `provenance`: Full audit trail (retrieved nodes, validation steps, retries)
+    """
+    trace_id = get_trace_id()
+
+    logger.info(
+        "NL2SQL query requested",
+        query_length=len(request.query),
+        schema_name=request.schema_name,
+        limit=request.limit,
+        trace_id=trace_id,
+    )
+
+    # Validate row limit against config
+    row_limit = min(
+        request.limit or settings.nl2sql.default_row_limit,
+        settings.nl2sql.max_row_limit,
+    )
+
+    # Execute the NL2SQL pipeline
+    response = await nl2sql_service.execute_query(
+        user_query=request.query,
+        schema_name=request.schema_name or "public",
+        row_limit=row_limit,
+        timeout_seconds=request.timeout_seconds,
+    )
+
+    logger.info(
+        "NL2SQL query completed",
+        status=response.status,
+        sql_generated=response.sql is not None,
+        rows_returned=response.results.row_count if response.results else 0,
+        retries=response.provenance.retries,
+        trace_id=trace_id,
+    )
+
+    return response
 
 
 # FastAPI app is now ready to be imported and run by uvicorn or other ASGI servers

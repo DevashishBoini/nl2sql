@@ -20,9 +20,14 @@ from ..infrastructure.llm_client import LLMClient
 from ..infrastructure.embedding_client import EmbeddingClient
 from ..repositories.schema_repository import SchemaRepository
 from ..repositories.vector_repository import VectorRepository
+from ..repositories.schema_filtering import SchemaFilteringRepository
+from ..repositories.sql_generation import SQLGenerationRepository
+from ..repositories.sql_validation import SQLValidationRepository
+from ..repositories.sql_execution import SQLExecutionRepository
 from ..services.schema_service import SchemaService
 from ..services.vector_service import VectorService
-from ..config import Settings
+from ..services.nl2sql_service import NL2SQLService
+from ..config import Settings, NL2SQLConfig
 
 
 def get_settings(request: Request) -> Settings:
@@ -183,10 +188,92 @@ def get_vector_service(request: Request) -> VectorService:
     return vector_service
 
 
+def get_nl2sql_service(request: Request) -> NL2SQLService:
+    """
+    Dependency to get an NL2SQLService instance.
+
+    This creates an NL2SQLService with full repository tree:
+    NL2SQLService (orchestrator)
+      ├── VectorRepository (schema retrieval)
+      ├── SchemaFilteringRepository (deterministic filtering)
+      ├── SQLGenerationRepository (LLM-based generation)
+      ├── SQLValidationRepository (SQL validation)
+      └── SQLExecutionRepository (SQL execution)
+
+    Usage in routes:
+        @app.post("/nl2sql/query")
+        async def nl2sql_query(nl2sql_service: NL2SQLServiceDep):
+            response = await nl2sql_service.execute_query(query)
+            return response
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        NL2SQLService instance
+
+    Raises:
+        RuntimeError: If required clients are not initialized
+    """
+    if not hasattr(request.app.state, "db_client"):
+        raise RuntimeError("Database client not initialized")
+    if not hasattr(request.app.state, "embedding_client"):
+        raise RuntimeError("Embedding client not initialized")
+    if not hasattr(request.app.state, "llm_client"):
+        raise RuntimeError("LLM client not initialized")
+    if not hasattr(request.app.state, "settings"):
+        raise RuntimeError("Settings not initialized")
+
+    db_client = request.app.state.db_client
+    embedding_client = request.app.state.embedding_client
+    llm_client = request.app.state.llm_client
+    settings = request.app.state.settings
+
+    # Build NL2SQL config from settings
+    nl2sql_config = NL2SQLConfig(
+        retrieval_top_k=settings.nl2sql.retrieval_top_k,
+        max_tables=settings.nl2sql.max_tables,
+        max_columns=settings.nl2sql.max_columns,
+        max_relationships=settings.nl2sql.max_relationships,
+        max_retries=settings.nl2sql.max_retries,
+        default_row_limit=settings.nl2sql.default_row_limit,
+        max_row_limit=settings.nl2sql.max_row_limit,
+        query_timeout_seconds=settings.nl2sql.query_timeout_seconds,
+    )
+
+    # Build repositories
+    vector_repo = VectorRepository(
+        db_client=db_client,
+        embedding_client=embedding_client,
+        config=settings.vector_store
+    )
+
+    schema_filtering_repo = SchemaFilteringRepository(config=nl2sql_config)
+
+    sql_generation_repo = SQLGenerationRepository(llm_client=llm_client, config=settings.llm)
+
+    sql_validation_repo = SQLValidationRepository(db_client=db_client)
+
+    sql_execution_repo = SQLExecutionRepository(db_client=db_client)
+
+    # Build NL2SQLService (thin orchestrator)
+    nl2sql_service = NL2SQLService(
+        vector_repository=vector_repo,
+        schema_filtering_repository=schema_filtering_repo,
+        sql_generation_repository=sql_generation_repo,
+        sql_validation_repository=sql_validation_repo,
+        sql_execution_repository=sql_execution_repo,
+        config=nl2sql_config,
+    )
+
+    return nl2sql_service
+
+
 # Type aliases for cleaner dependency injection
 # Service dependencies (used in API routes)
 SchemaServiceDep = Annotated[SchemaService, Depends(get_schema_service)]
 VectorServiceDep = Annotated[VectorService, Depends(get_vector_service)]
+NL2SQLServiceDep = Annotated[NL2SQLService, Depends(get_nl2sql_service)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 # Optional client dependencies (used in health checks)
