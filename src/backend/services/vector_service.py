@@ -188,7 +188,7 @@ class VectorService:
             # Use a single transaction for all batches (atomic all-or-nothing)
             total_added = 0
             batch_number = 0
-            async with self.vector_repo.db.acquire_connection() as conn:
+            async with self.vector_repo.db.acquire_connection(read_only=False) as conn:
                 async with conn.transaction():
                     try:
                         for i in range(0, len(all_texts), self.batch_size):
@@ -508,7 +508,7 @@ class VectorService:
             is_foreign_key=column.is_foreign_key,
             is_unique=column.is_unique,
             is_nullable=column.is_nullable,
-            sample_values=column.metadata.get("sample_values"),  # Optional field
+            sample_values=column.sample_values,  # Direct field from ColumnNode
         )
 
         return content, metadata

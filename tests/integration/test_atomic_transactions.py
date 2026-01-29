@@ -135,7 +135,7 @@ class TestAtomicTransactions:
         await vector_repo.ensure_setup()
 
         # Add all documents using atomic transaction
-        async with vector_repo.db.acquire_connection() as conn:
+        async with vector_repo.db.acquire_connection(read_only=False) as conn:
             async with conn.transaction():
                 doc_ids = await vector_repo._add_vectors_with_connection(
                     conn=conn,
@@ -180,7 +180,7 @@ class TestAtomicTransactions:
         # Now try to add documents in a transaction with one that will fail
         # (invalid metadata that violates constraints)
         try:
-            async with vector_repo.db.acquire_connection() as conn:
+            async with vector_repo.db.acquire_connection(read_only=False) as conn:
                 async with conn.transaction():
                     # Add first batch (valid)
                     batch1_texts = ["Table: transaction_test_1"]

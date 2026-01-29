@@ -5,7 +5,78 @@ This module provides simple character-based validation to ensure
 inputs stay within API limits. Uses hard character limits for simplicity.
 """
 
-from typing import List, Optional
+from typing import Any, List, Optional
+
+
+def truncate_sample_value(value: Any, max_length: int) -> Any:
+    """
+    Truncate a sample value if it exceeds the maximum length.
+
+    Only truncates string values. Other types (int, float, bool, None) are returned as-is.
+
+    Args:
+        value: The sample value to potentially truncate
+        max_length: Maximum allowed character length for strings
+
+    Returns:
+        Original value if not a string or within limit, truncated string with "..." if exceeded
+
+    Example:
+        >>> truncate_sample_value("short")
+        'short'
+        >>> truncate_sample_value("a" * 150, max_length=100)
+        'aaaa...aaa'  # 97 chars + "..."
+    """
+    if value is None:
+        return None
+
+    if not isinstance(value, str):
+        return value
+
+    if len(value) <= max_length:
+        return value
+
+    # Truncate and add ellipsis
+    # Keep some chars from end for context (e.g., file extensions, IDs)
+    if max_length <= 10:
+        return value[:max_length - 3] + "..."
+
+    # For longer limits, show beginning and end
+    prefix_len = max_length - 6  # "..." in middle takes 3, keep some end chars
+    suffix_len = 3
+    return value[:prefix_len] + "..." + value[-suffix_len:]
+
+
+def truncate_sample_values(
+    values: List[Any],
+    max_length: int,
+    max_count: int,
+) -> List[Any]:
+    """
+    Truncate a list of sample values.
+
+    Limits both the number of values and the length of each string value.
+
+    Args:
+        values: List of sample values
+        max_length: Maximum character length per string value
+        max_count: Maximum number of values to keep
+
+    Returns:
+        List of truncated sample values
+
+    Example:
+        >>> truncate_sample_values(["short", "a" * 200, 123, None])
+        ['short', 'aaaa...aaa', 123, None]
+    """
+    if not values:
+        return values
+
+    # Limit count first
+    limited_values = values[:max_count]
+
+    # Truncate each value
+    return [truncate_sample_value(v, max_length) for v in limited_values]
 
 
 class InputValidator:

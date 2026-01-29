@@ -94,19 +94,18 @@ def get_schema_service(request: Request) -> SchemaService:
     """
     if not hasattr(request.app.state, "db_client"):
         raise RuntimeError("Database client not initialized")
+    if not hasattr(request.app.state, "settings"):
+        raise RuntimeError("Settings not initialized")
 
     db_client = request.app.state.db_client
     storage_client = getattr(request.app.state, "storage_client", None)
-    settings = getattr(request.app.state, "settings", None)
+    settings = request.app.state.settings
 
-    # Get YAML config from settings if available
-    yaml_path = None
-    yaml_bucket = None
-    if settings:
-        yaml_path = settings.storage.schema_yaml_path
-        yaml_bucket = settings.storage.default_bucket
+    # Get YAML config from settings
+    yaml_path = settings.storage.schema_yaml_path
+    yaml_bucket = settings.storage.default_bucket
 
-    schema_repo = SchemaRepository(db_client)
+    schema_repo = SchemaRepository(db_client, settings.schema_indexing)
     schema_service = SchemaService(
         schema_repository=schema_repo,
         storage_client=storage_client,
@@ -146,20 +145,19 @@ def get_vector_service(request: Request) -> VectorService:
         raise RuntimeError("Database client not initialized")
     if not hasattr(request.app.state, "embedding_client"):
         raise RuntimeError("Embedding client not initialized")
+    if not hasattr(request.app.state, "settings"):
+        raise RuntimeError("Settings not initialized")
 
     db_client = request.app.state.db_client
     embedding_client = request.app.state.embedding_client
     storage_client = getattr(request.app.state, "storage_client", None)
-    settings = getattr(request.app.state, "settings", None)
+    settings = request.app.state.settings
 
     # Build SchemaService (needed for indexing)
-    yaml_path = None
-    yaml_bucket = None
-    if settings:
-        yaml_path = settings.storage.schema_yaml_path
-        yaml_bucket = settings.storage.default_bucket
+    yaml_path = settings.storage.schema_yaml_path
+    yaml_bucket = settings.storage.default_bucket
 
-    schema_repo = SchemaRepository(db_client)
+    schema_repo = SchemaRepository(db_client, settings.schema_indexing)
     schema_service = SchemaService(
         schema_repository=schema_repo,
         storage_client=storage_client,
@@ -168,9 +166,6 @@ def get_vector_service(request: Request) -> VectorService:
     )
 
     # Build VectorRepository with shared DatabaseClient
-    if not settings:
-        raise RuntimeError("Settings not initialized")
-
     vector_repo = VectorRepository(
         db_client=db_client,
         embedding_client=embedding_client,
@@ -178,7 +173,7 @@ def get_vector_service(request: Request) -> VectorService:
     )
 
     # Build VectorService
-    batch_size = settings.vector_store.batch_size if settings else 100
+    batch_size = settings.vector_store.batch_size
     vector_service = VectorService(
         vector_repository=vector_repo,
         schema_service=schema_service,

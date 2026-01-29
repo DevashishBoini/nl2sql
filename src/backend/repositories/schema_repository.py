@@ -11,9 +11,11 @@ All methods return domain models from schema_nodes.py (SSOT) for type safety.
 
 from typing import Any, List
 
+from ..config import SchemaIndexingConfig
 from ..infrastructure.database_client import DatabaseClient
 from ..utils.logging import get_module_logger
 from ..utils.tracing import current_trace_id
+from ..utils.token_utils import truncate_sample_values
 from ..domain.errors import DatabaseQueryError
 from ..domain.schema_nodes import (
     TableNode,
@@ -46,15 +48,21 @@ class SchemaRepository:
         relationships = await schema_repo.get_relationships()
     """
 
-    def __init__(self, db_client: DatabaseClient):
+    def __init__(self, db_client: DatabaseClient, schema_indexing_config: SchemaIndexingConfig):
         """
         Initialize schema repository.
 
         Args:
             db_client: DatabaseClient instance for database operations
+            schema_indexing_config: Schema indexing configuration for sample value settings
         """
         self.db_client = db_client
-        logger.info("SchemaRepository initialized")
+        self.schema_indexing_config = schema_indexing_config
+        logger.info(
+            "SchemaRepository initialized",
+            max_sample_values_count=schema_indexing_config.max_sample_values_count,
+            max_sample_value_length=schema_indexing_config.max_sample_value_length,
+        )
 
     async def _fetch_sample_values(
         self,
@@ -98,6 +106,13 @@ class SchemaRepository:
 
             # Extract values from result dicts
             sample_values = [row[column_name] for row in results]
+
+            # Truncate long string values to avoid storing excessively large samples
+            sample_values = truncate_sample_values(
+                sample_values,
+                max_length=self.schema_indexing_config.max_sample_value_length,
+                max_count=self.schema_indexing_config.max_sample_values_count,
+            )
 
             return sample_values
 

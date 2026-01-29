@@ -6,7 +6,10 @@ Uses shared DatabaseClient for connection pooling.
 """
 
 import json
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -20,6 +23,62 @@ from backend.utils.logging import get_module_logger
 from backend.utils.tracing import current_trace_id
 
 logger = get_module_logger()
+
+
+def sanitize_for_json(obj: Any) -> Any:
+    """
+    Recursively sanitize objects to be JSON serializable.
+
+    Converts:
+    - datetime/date objects to ISO format strings
+    - Decimal to float
+    - UUID to string
+    - Pydantic models to dict
+    - Other non-serializable types to string representation
+
+    Args:
+        obj: Object to sanitize
+
+    Returns:
+        JSON-serializable version of the object
+    """
+    if obj is None:
+        return None
+
+    # Handle datetime and date
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+
+    # Handle Decimal
+    if isinstance(obj, Decimal):
+        return float(obj)
+
+    # Handle UUID
+    if isinstance(obj, UUID):
+        return str(obj)
+
+    # Handle Pydantic models
+    if isinstance(obj, BaseModel):
+        return sanitize_for_json(obj.model_dump())
+
+    # Handle dictionaries
+    if isinstance(obj, dict):
+        return {key: sanitize_for_json(value) for key, value in obj.items()}
+
+    # Handle lists/tuples
+    if isinstance(obj, (list, tuple)):
+        return [sanitize_for_json(item) for item in obj]
+
+    # Handle sets
+    if isinstance(obj, set):
+        return [sanitize_for_json(item) for item in obj]
+
+    # Primitives and already serializable types
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+
+    # Fallback: convert to string
+    return str(obj)
 
 
 class VectorRepository:
@@ -125,8 +184,8 @@ class VectorRepository:
         # Ensure setup is done
         await self.ensure_setup()
 
-        # Acquire connection and insert (auto-commit)
-        async with self.db.acquire_connection() as conn:
+        # Acquire connection with write access and insert (auto-commit)
+        async with self.db.acquire_connection(read_only=False) as conn:
             return await self._add_vectors_with_connection(conn, texts, metadatas, ids)
 
     async def _add_vectors_with_connection(
@@ -206,8 +265,10 @@ class VectorRepository:
                 column_name = metadata.get("column_name")
                 constraint_name = metadata.get("constraint_name")
 
-                # Store full metadata as JSONB
-                metadata_json = json.dumps(metadata)
+                # Sanitize and store full metadata as JSONB
+                # (converts datetime, Decimal, UUID to JSON-serializable types)
+                sanitized_metadata = sanitize_for_json(metadata)
+                metadata_json = json.dumps(sanitized_metadata)
 
                 # Convert embedding list to PostgreSQL vector format
                 # pgvector expects a string like '[0.1, 0.2, 0.3]'
@@ -418,7 +479,7 @@ class VectorRepository:
         )
 
         try:
-            async with self.db.acquire_connection() as conn:
+            async with self.db.acquire_connection(read_only=False) as conn:
                 if drop_table:
                     # Drop entire table (cascade drops all indexes and triggers)
                     await conn.execute(f"DROP TABLE IF EXISTS {self.config.table_name} CASCADE;")
@@ -542,13 +603,13 @@ class VectorRepository:
 
     async def _ensure_pgvector_extension(self) -> None:
         """Enable pgvector extension if not already enabled."""
-        async with self.db.acquire_connection() as conn:
+        async with self.db.acquire_connection(read_only=False) as conn:
             await conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
             logger.info("pgvector extension enabled")
 
     async def _ensure_tables_exist(self) -> None:
         """Create vector store tables if they don't exist."""
-        async with self.db.acquire_connection() as conn:
+        async with self.db.acquire_connection(read_only=False) as conn:
             # Check if table exists
             table_exists = await conn.fetchval(
                 """
@@ -604,7 +665,7 @@ class VectorRepository:
 
     async def _ensure_hnsw_index(self) -> None:
         """Create HNSW index if it doesn't exist."""
-        async with self.db.acquire_connection() as conn:
+        async with self.db.acquire_connection(read_only=False) as conn:
             index_name = f"{self.config.table_name}_hnsw_idx"
 
             # Check if index exists
@@ -638,7 +699,7 @@ class VectorRepository:
 
     async def _ensure_metadata_indexes(self) -> None:
         """Create metadata indexes if they don't exist."""
-        async with self.db.acquire_connection() as conn:
+        async with self.db.acquire_connection(read_only=False) as conn:
             # Define indexes to create
             index_definitions = [
                 f"CREATE INDEX IF NOT EXISTS idx_{self.config.table_name}_node_type ON {self.config.table_name}(node_type);",

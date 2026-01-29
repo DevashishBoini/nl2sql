@@ -7,8 +7,6 @@ from backend.config_constants import (
     OPENROUTER_EMBEDDING_MODELS,
     OPENROUTER_LLM_MODELS,
     OPEN_ROUTER_API_URL,
-    LLM_MAX_INPUT_CHARS,
-    EMBEDDING_MAX_INPUT_CHARS,
     DistanceStrategy,
 )
 
@@ -36,6 +34,9 @@ class DatabaseConfig(BaseModel):
     # Application settings
     application_name: str = "nl2sql"
     jit_enabled: bool = False  # PostgreSQL JIT compilation
+
+    # Security settings - Read-only enforcement
+    enforce_read_only_default: bool = True  # Default to read-only transactions (safe for NL2SQL user queries)
 
     # Retry settings
     max_retries: int = 3
@@ -66,6 +67,18 @@ class DBQueryConfig(BaseModel):
 
 
 # -------------------------
+# Schema Indexing
+# -------------------------
+
+class SchemaIndexingConfig(BaseModel):
+    """Configuration for schema extraction and indexing."""
+
+    # Sample values settings
+    max_sample_values_count: int = 5    # Max samples per column
+    max_sample_value_length: int = 100  # Max chars per sample string
+
+
+# -------------------------
 # LLM / Embeddings
 # -------------------------
 
@@ -75,7 +88,7 @@ class LLMConfig(BaseModel):
     temperature: float = 0.1
     top_p: float = 0.1
     max_tokens: int = 2048
-    max_input_chars: int = LLM_MAX_INPUT_CHARS  # 1.2M characters max input
+    max_input_chars: int = 50000  # Max characters for LLM input (prompts + system prompts)
 
     # OpenRouter API settings
     base_url: str = OPEN_ROUTER_API_URL
@@ -88,7 +101,7 @@ class EmbeddingConfig(BaseModel):
     openrouter_api_key: str
     embedding_model: str = OPENROUTER_EMBEDDING_MODELS.OPENAI_TEXT_EMBEDDING_MODEL_3_SMALL
     embedding_dimension: int = 1536
-    max_input_chars: int = EMBEDDING_MAX_INPUT_CHARS  # 30k characters max input
+    max_input_chars: int = 20000  # Max characters for embedding input
 
     # OpenRouter API settings
     base_url: str = OPEN_ROUTER_API_URL
@@ -153,6 +166,7 @@ class Settings(BaseSettings):
     database: DatabaseConfig
     storage: StorageConfig
     db_query: DBQueryConfig = DBQueryConfig()
+    schema_indexing: SchemaIndexingConfig = SchemaIndexingConfig()
     llm: LLMConfig
     embedding: EmbeddingConfig
     retrieval: RetrievalConfig = RetrievalConfig()

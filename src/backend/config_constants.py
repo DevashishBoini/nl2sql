@@ -29,16 +29,6 @@ class OPENROUTER_EMBEDDING_MODELS(str, Enum):
 OPEN_ROUTER_API_URL = "https://openrouter.ai/api/v1"
 
 # -------------------------
-# Input Character Limits
-# -------------------------
-
-EMBEDDING_MAX_INPUT_CHARS = 20000
-
-# Maximum characters for LLM input (prompts + system prompts)
-LLM_MAX_INPUT_CHARS = 50000
-
-
-# -------------------------
 # Vector Store Constants
 # -------------------------
 

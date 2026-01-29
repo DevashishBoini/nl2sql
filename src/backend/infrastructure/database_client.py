@@ -229,19 +229,26 @@ class DatabaseClient:
             }
 
     @asynccontextmanager
-    async def acquire_connection(self, schema: Optional[str] = None):
+    async def acquire_connection(self, schema: Optional[str] = None, read_only: Optional[bool] = None):
         """
         Context manager to acquire a database connection from the pool.
 
         Args:
             schema: Optional schema to set for this connection
+            read_only: Optional read-only flag. If None, uses config default (enforce_read_only_default).
+                      If True, sets transaction to READ ONLY. If False, allows write operations.
 
         Yields:
             asyncpg.Connection: Database connection
 
         Example:
+            # Read-only connection (default)
             async with client.acquire_connection(schema="inventory") as conn:
                 result = await conn.fetch("SELECT * FROM products")
+
+            # Write-enabled connection (for internal operations like vector indexing)
+            async with client.acquire_connection(read_only=False) as conn:
+                await conn.execute("INSERT INTO schema_embeddings ...")
         """
         if not self.is_connected():
             raise DatabaseConnectionError("Database client is not connected")
@@ -249,16 +256,43 @@ class DatabaseClient:
         if self._pool is None:
             raise DatabaseConnectionError("Connection pool is not available")
 
+        # Determine effective read-only mode
+        effective_read_only = read_only if read_only is not None else self.config.enforce_read_only_default
+
+        trace_id = current_trace_id()
+
         async with self._pool.acquire() as connection:
             # Set schema if specified
             if schema and schema != self.config.default_schema:
                 await connection.execute(f"SET search_path TO {schema}")
 
-            yield connection
+            # Enforce read-only at session level (not transaction level)
+            # This affects ALL queries on this connection until reset
+            if effective_read_only:
+                await connection.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
+                logger.debug(
+                    "Connection acquired in READ ONLY mode",
+                    schema=schema or self.config.default_schema,
+                    trace_id=trace_id
+                )
+            else:
+                # Ensure read-write mode is set explicitly
+                await connection.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE")
+                logger.debug(
+                    "Connection acquired with WRITE access",
+                    schema=schema or self.config.default_schema,
+                    trace_id=trace_id
+                )
 
-            # Reset to default schema after use
-            if schema and schema != self.config.default_schema:
-                await connection.execute(f"SET search_path TO {self.config.default_schema}")
+            try:
+                yield connection
+            finally:
+                # Reset to default read-write mode after use (for connection pooling)
+                await connection.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE")
+
+                # Reset to default schema after use
+                if schema and schema != self.config.default_schema:
+                    await connection.execute(f"SET search_path TO {self.config.default_schema}")
 
     async def execute_query(
         self,
