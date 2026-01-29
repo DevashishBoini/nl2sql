@@ -1,13 +1,15 @@
 # src/nl2sql/config.py
 
 from functools import lru_cache
+
 from backend.config_constants import (
     LogLevel,
     OPENROUTER_EMBEDDING_MODELS,
     OPENROUTER_LLM_MODELS,
     OPEN_ROUTER_API_URL,
     LLM_MAX_INPUT_CHARS,
-    EMBEDDING_MAX_INPUT_CHARS
+    EMBEDDING_MAX_INPUT_CHARS,
+    DistanceStrategy,
 )
 
 from pydantic import BaseModel
@@ -105,6 +107,23 @@ class RetrievalConfig(BaseModel):
 
 
 # -------------------------
+# Vector Store
+# -------------------------
+
+class VectorStoreConfig(BaseModel):
+    table_name: str = "schema_embeddings"
+    collection_name: str = "schema_vectors"
+    use_hnsw: bool = True
+    hnsw_m: int = 16
+    hnsw_ef_construction: int = 64
+    hnsw_ef_search: int = 40
+    distance_strategy: DistanceStrategy = DistanceStrategy.COSINE
+    batch_size: int = 100
+    default_k: int = 5
+    default_min_similarity: float = 0.00  # Realistic threshold for cosine similarity (0.3-0.5 for good matches)
+
+
+# -------------------------
 # Server
 # -------------------------
 
@@ -137,6 +156,7 @@ class Settings(BaseSettings):
     llm: LLMConfig
     embedding: EmbeddingConfig
     retrieval: RetrievalConfig = RetrievalConfig()
+    vector_store: VectorStoreConfig = VectorStoreConfig()
     server: ServerConfig = ServerConfig()
     app: AppConfig = AppConfig()
 

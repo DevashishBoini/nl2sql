@@ -1,5 +1,6 @@
-from typing import Literal
 from enum import Enum
+from langchain_postgres.vectorstores import DistanceStrategy
+
 
 class LogLevel(str, Enum):
     DEBUG = "DEBUG"
@@ -35,3 +36,17 @@ EMBEDDING_MAX_INPUT_CHARS = 20000
 
 # Maximum characters for LLM input (prompts + system prompts)
 LLM_MAX_INPUT_CHARS = 50000
+
+
+# -------------------------
+# Vector Store Constants
+# -------------------------
+
+# Mapping from DistanceStrategy to PostgreSQL pgvector operator classes
+# These operator class names are PostgreSQL pgvector extension constants
+# used in CREATE INDEX statements, not Python library constants
+PGVECTOR_OPS_MAP = {
+    DistanceStrategy.COSINE: "vector_cosine_ops",
+    DistanceStrategy.EUCLIDEAN: "vector_l2_ops",
+    DistanceStrategy.MAX_INNER_PRODUCT: "vector_ip_ops",
+}

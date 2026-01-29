@@ -140,3 +140,99 @@ class SchemaSummaryResponse(BaseModel):
         default_factory=list,
         description="Sample columns from the first table (includes sample values)"
     )
+
+
+# -------------------------
+# Vector Store Response Models
+# -------------------------
+
+class VectorSearchResult(BaseModel):
+    """
+    Single result from a vector similarity search.
+
+    Represents a document retrieved from the vector store,
+    including its content, metadata, and similarity score.
+    Used internally by vector operations and as part of search responses.
+    """
+    content: str = Field(..., description="Document content text")
+    metadata: Dict[str, Any] = Field(..., description="Document metadata")
+    similarity_score: float = Field(..., ge=0.0, le=1.0, description="Similarity score (0.0 to 1.0)")
+
+
+class IndexSchemaResponse(BaseModel):
+    """Response model for vector store schema indexing."""
+
+    trace_id: str = Field(..., description="Unique trace ID for this request")
+    schema_name: str = Field(..., description="Name of schema that was indexed")
+    tables_indexed: int = Field(..., description="Number of tables indexed")
+    columns_indexed: int = Field(..., description="Number of columns indexed")
+    relationships_indexed: int = Field(..., description="Number of relationships indexed")
+    total_documents: int = Field(..., description="Total documents added to vector store")
+
+
+class SchemaSearchResult(BaseModel):
+    """Single schema search result with similarity score."""
+
+    content: str = Field(..., description="Document content")
+    metadata: Dict[str, Any] = Field(..., description="Document metadata")
+    similarity_score: float = Field(..., description="Similarity score (0.0 to 1.0)")
+
+
+class VectorSchemaSearchResponse(BaseModel):
+    """Response model for vector store schema search."""
+
+    trace_id: str = Field(..., description="Unique trace ID for this request")
+    query: str = Field(..., description="Original search query")
+    results: List[SchemaSearchResult] = Field(..., description="Search results")
+    result_count: int = Field(..., description="Number of results returned")
+
+
+class VectorStatsResponse(BaseModel):
+    """Response model for vector store statistics."""
+
+    trace_id: str = Field(..., description="Unique trace ID for this request")
+    total_documents: int = Field(..., description="Total documents in vector store")
+    node_type_counts: Dict[str, int] = Field(..., description="Document counts by node type")
+    schema_counts: Dict[str, int] = Field(..., description="Document counts by schema")
+
+
+class DropCollectionResponse(BaseModel):
+    """Response model for dropping vector collection."""
+
+    trace_id: str = Field(..., description="Unique trace ID for this request")
+    action: str = Field(..., description="Action performed (dropped_table or dropped_index)")
+    table_name: Optional[str] = Field(None, description="Name of table that was dropped")
+    index_name: Optional[str] = Field(None, description="Name of index that was dropped")
+    indexes_dropped: Optional[str] = Field(None, description="Description of indexes dropped")
+    success: bool = Field(default=True, description="Whether operation succeeded")
+
+
+# -------------------------
+# Service Layer Models (used by services, no trace_id)
+# -------------------------
+
+class IndexSchemaStats(BaseModel):
+    """Statistics returned by VectorService.index_schema()."""
+
+    schema_name: str = Field(..., description="Name of schema that was indexed")
+    tables_indexed: int = Field(..., description="Number of tables indexed")
+    columns_indexed: int = Field(..., description="Number of columns indexed")
+    relationships_indexed: int = Field(..., description="Number of relationships indexed")
+    total_documents: int = Field(..., description="Total documents added to vector store")
+
+
+class DropCollectionResult(BaseModel):
+    """Result returned by VectorService.drop_collection()."""
+
+    action: str = Field(..., description="Action performed (dropped_table or dropped_index)")
+    table_name: Optional[str] = Field(None, description="Name of table that was dropped")
+    index_name: Optional[str] = Field(None, description="Name of index that was dropped")
+    indexes_dropped: Optional[str] = Field(None, description="Description of indexes dropped")
+
+
+class VectorCollectionStats(BaseModel):
+    """Statistics returned by VectorService.get_collection_stats()."""
+
+    total_documents: int = Field(..., description="Total documents in vector store")
+    node_type_counts: Dict[str, int] = Field(..., description="Document counts by node type")
+    schema_counts: Dict[str, int] = Field(..., description="Document counts by schema")

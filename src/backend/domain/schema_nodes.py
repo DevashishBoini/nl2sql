@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from .base_enums import NodeType
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 from abc import ABC
 
 

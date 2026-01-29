@@ -9,12 +9,21 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Dict, Union
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Body
 from fastapi.middleware.cors import CORSMiddleware
 
 from .utils.logging import configure_logging, get_module_logger
-from .utils.tracing import current_trace_id, get_trace_id
-from .domain.responses import HealthResponse, SchemaSummaryResponse
+from .utils.tracing import get_trace_id
+from .domain.responses import (
+    HealthResponse,
+    SchemaSummaryResponse,
+    IndexSchemaResponse,
+    VectorSchemaSearchResponse,
+    VectorStatsResponse,
+    SchemaSearchResult,
+    DropCollectionResponse
+)
+from .domain.requests import IndexSchemaRequest, SchemaSearchRequest, DropCollectionRequest
 from .api.middleware import (
     trace_id_middleware,
     logging_middleware,
@@ -23,10 +32,11 @@ from .api.middleware import (
 from .api.dependencies import (
     SettingsDep,
     SchemaServiceDep,
+    VectorServiceDep,
     OptionalDatabaseClientDep,
     OptionalStorageClientDep,
     OptionalLLMClientDep,
-    OptionalEmbeddingClientDep
+    OptionalEmbeddingClientDep,
 )
 from .config import get_settings
 from .infrastructure.database_client import DatabaseClient
@@ -87,7 +97,8 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to connect embedding client: {e}")
         # Continue without embeddings - health check will report status
 
-    # Store in app state for dependency injection
+    # Store clients in app state for dependency injection
+    # Note: VectorRepository is created on-demand in dependencies.py
     app.state.db_client = db_client
     app.state.storage_client = storage_client
     app.state.llm_client = llm_client
@@ -147,7 +158,7 @@ app.exception_handler(Exception)(general_exception_handler)
 async def root(settings: SettingsDep) -> Dict[str, Union[str, None]]:
     """Root endpoint returning basic API information."""
 
-    trace_id = current_trace_id()
+    trace_id = get_trace_id()
     logger.info("Root endpoint accessed", trace_id=trace_id)
 
     return {
@@ -163,11 +174,11 @@ async def health(
     db_client: OptionalDatabaseClientDep,
     storage_client: OptionalStorageClientDep,
     llm_client: OptionalLLMClientDep,
-    embedding_client: OptionalEmbeddingClientDep
+    embedding_client: OptionalEmbeddingClientDep,
 ) -> HealthResponse:
     """Health check endpoint with comprehensive system status."""
 
-    trace_id = current_trace_id()
+    trace_id = get_trace_id()
     logger.info("Health check endpoint accessed", trace_id=trace_id)
 
     # Check database status
@@ -192,12 +203,22 @@ async def health(
     if embedding_client:
         embedding_status = "healthy" if embedding_client.is_connected() else "unhealthy"
 
+    # Vector store status depends on DB + embedding clients
+    # VectorRepository is created on-demand, so check dependencies
+    vector_store_status = "not_configured"
+    if db_client and embedding_client:
+        if database_status == "healthy" and embedding_status == "healthy":
+            vector_store_status = "healthy"
+        else:
+            vector_store_status = "degraded"
+
     # Determine overall status
     overall_status = "healthy" if (
         database_status == "healthy" and
         storage_status == "healthy" and
         llm_status == "healthy" and
-        embedding_status == "healthy"
+        embedding_status == "healthy" and
+        vector_store_status == "healthy"
     ) else "degraded"
 
     return HealthResponse(
@@ -205,7 +226,7 @@ async def health(
         timestamp=datetime.now(timezone.utc),
         version="0.1.0",
         database_status=database_status,
-        vector_store_status=storage_status,
+        vector_store_status=vector_store_status,
         llm_service_status=llm_status,
         embedding_service_status=embedding_status
     )
@@ -241,6 +262,215 @@ async def test_schema(schema_service: SchemaServiceDep) -> SchemaSummaryResponse
         relationships=summary["relationships"],
         sample_table=summary.get("sample_table"),
         sample_columns=summary.get("sample_columns", [])
+    )
+
+
+# -------------------------
+# Vector Store Endpoints
+# -------------------------
+
+@app.post("/api/v1/schema/index", response_model=IndexSchemaResponse, tags=["Schema Indexing"])
+async def index_schema(
+    vector_service: VectorServiceDep,
+    settings: SettingsDep,
+    request: IndexSchemaRequest = Body(default=IndexSchemaRequest())
+) -> IndexSchemaResponse:
+    """
+    Index schema into vector store for semantic search.
+
+    This endpoint extracts all schema elements (tables, columns, relationships)
+    from the specified PostgreSQL schema, transforms them into embeddings,
+    and stores them in the vector store.
+
+    **Admin operation**: This endpoint should be called after schema changes
+    or when setting up the system for the first time.
+    """
+    trace_id = get_trace_id()
+
+    # Use database default schema if not provided in request
+    schema_name = request.schema_name or settings.database.default_schema
+
+    logger.info(
+        "Schema indexing requested",
+        schema_name=schema_name,
+        replace_existing=request.replace_existing,
+        trace_id=trace_id
+    )
+
+    # Index schema via vector service
+    stats = await vector_service.index_schema(
+        schema=schema_name,
+        replace_existing=request.replace_existing
+    )
+
+    logger.info(
+        "Schema indexing completed",
+        schema_name=stats.schema_name,
+        tables_indexed=stats.tables_indexed,
+        columns_indexed=stats.columns_indexed,
+        relationships_indexed=stats.relationships_indexed,
+        total_documents=stats.total_documents,
+        trace_id=trace_id
+    )
+
+    return IndexSchemaResponse(
+        trace_id=trace_id,
+        schema_name=stats.schema_name,
+        tables_indexed=stats.tables_indexed,
+        columns_indexed=stats.columns_indexed,
+        relationships_indexed=stats.relationships_indexed,
+        total_documents=stats.total_documents,
+    )
+
+
+@app.post("/api/v1/schema/search", response_model=VectorSchemaSearchResponse, tags=["Schema Retrieval"])
+async def search_schema(
+    request: SchemaSearchRequest,
+    vector_service: VectorServiceDep,
+    settings: SettingsDep
+) -> VectorSchemaSearchResponse:
+    """
+    Search schema using semantic similarity.
+
+    This endpoint performs vector similarity search on indexed schema elements,
+    returning the most relevant tables, columns, and relationships for a given query.
+
+    **Debugging endpoint**: Useful for testing RAG retrieval quality and understanding
+    which schema elements are retrieved for specific queries.
+    """
+    trace_id = get_trace_id()
+
+    # Use config defaults if not provided in request
+    top_k = request.top_k if request.top_k is not None else settings.vector_store.default_k
+    min_similarity = request.min_similarity if request.min_similarity is not None else settings.vector_store.default_min_similarity
+
+    logger.info(
+        "Schema search requested",
+        query=request.query,
+        k=top_k,
+        min_similarity=min_similarity,
+        trace_id=trace_id
+    )
+
+    # Search schema via vector service
+    results = await vector_service.search_schema(
+        query=request.query,
+        k=top_k,
+        schema_name=request.schema_name,
+        node_types=request.node_types,
+        min_similarity=min_similarity
+    )
+
+    # Convert VectorSearchResult to SchemaSearchResult
+    search_results = [
+        SchemaSearchResult(
+            content=result.content,
+            metadata=result.metadata,
+            similarity_score=result.similarity_score
+        )
+        for result in results
+    ]
+
+    logger.info(
+        "Schema search completed",
+        result_count=len(search_results),
+        trace_id=trace_id
+    )
+
+    return VectorSchemaSearchResponse(
+        trace_id=trace_id,
+        query=request.query,
+        results=search_results,
+        result_count=len(search_results)
+    )
+
+
+@app.get("/api/v1/vector/stats", response_model=VectorStatsResponse, tags=["Vector Store"])
+async def get_vector_stats(
+    vector_service: VectorServiceDep
+) -> VectorStatsResponse:
+    """
+    Get vector store statistics.
+
+    Returns counts of indexed documents by type and schema.
+    Useful for monitoring and verifying indexing operations.
+    """
+    trace_id = get_trace_id()
+    logger.info("Vector stats requested", trace_id=trace_id)
+
+    # Get stats via vector service
+    stats = await vector_service.get_collection_stats()
+
+    logger.info(
+        "Vector stats fetched",
+        total_documents=stats.total_documents,
+        trace_id=trace_id
+    )
+
+    return VectorStatsResponse(
+        trace_id=trace_id,
+        total_documents=stats.total_documents,
+        node_type_counts=stats.node_type_counts,
+        schema_counts=stats.schema_counts,
+    )
+
+
+@app.delete("/api/v1/vector/collection", response_model=DropCollectionResponse, tags=["Vector Store Admin"])
+async def drop_vector_collection(
+    request: DropCollectionRequest,
+    vector_service: VectorServiceDep
+) -> DropCollectionResponse:
+    """
+    Drop vector collection (table and/or indexes).
+
+    **DESTRUCTIVE ADMIN OPERATION**: This permanently deletes the vector store data.
+
+    Options:
+    - `drop_table=True`: Drops the entire `schema_embeddings` table, including all indexes (CASCADE)
+    - `drop_table=False`: Drops only the HNSW index, keeping the table and data
+
+    **Safety requirement**: Must set `confirm=true` in request body to proceed.
+
+    **When to use**:
+    - Before changing embedding dimensions
+    - To reset the vector store
+    - To drop and recreate indexes with different parameters
+    - During development/testing
+
+    **Warning**: After dropping the table, you must call `POST /api/v1/schema/index` to rebuild.
+    """
+    trace_id = get_trace_id()
+
+    # Safety check
+    if not request.confirm:
+        logger.warning(
+            "Drop collection attempted without confirmation",
+            trace_id=trace_id
+        )
+        raise ValueError("Must set confirm=true to drop collection")
+
+    logger.info(
+        "Drop collection requested",
+        drop_table=request.drop_table,
+        trace_id=trace_id
+    )
+
+    # Drop collection via vector service
+    result = await vector_service.drop_collection(drop_table=request.drop_table)
+
+    logger.info(
+        "Vector collection dropped",
+        action=result.action,
+        trace_id=trace_id
+    )
+
+    return DropCollectionResponse(
+        trace_id=trace_id,
+        success=True,
+        action=result.action,
+        table_name=result.table_name,
+        index_name=result.index_name,
+        indexes_dropped=result.indexes_dropped,
     )
 
 

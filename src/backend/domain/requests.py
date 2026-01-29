@@ -7,7 +7,6 @@ ensuring type safety and validation at API boundaries.
 
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from .base_enums import NodeType
 
 
 class QueryRequest(BaseModel):
@@ -46,24 +45,51 @@ class SchemaIndexRequest(BaseModel):
 class SchemaSearchRequest(BaseModel):
     """Request model for schema search operations."""
 
-    query: str = Field(..., description="Search query for schema elements", min_length=1)
-    top_k: int = Field(
-        default=15,
-        description="Number of top similar schema elements to return",
+    query: str = Field(..., description="Search query for schema elements", min_length=1, max_length=1000)
+    top_k: Optional[int] = Field(
+        default=None,
+        description="Number of top similar schema elements to return (uses config default if not provided)",
         ge=1,
         le=50
     )
-    node_types: Optional[List[NodeType]] = Field(
+    node_types: Optional[List[str]] = Field(
         default=None,
-        description="Filter results by node types (if None, includes all types)"
+        description="Filter results by node types (e.g., ['table', 'column', 'relationship'])"
     )
-    min_similarity_threshold: Optional[float] = Field(
+    min_similarity: Optional[float] = Field(
         default=None,
-        description="Minimum similarity score threshold (0.0 to 1.0)",
+        description="Minimum similarity score threshold (uses config default if not provided)",
         ge=0.0,
         le=1.0
     )
     schema_name: Optional[str] = Field(
         default=None,
         description="Filter results by specific schema name"
+    )
+
+
+class IndexSchemaRequest(BaseModel):
+    """Request model for indexing schema into vector store."""
+
+    schema_name: Optional[str] = Field(
+        default=None,
+        description="PostgreSQL schema name to index (uses database default schema if not provided)"
+    )
+    replace_existing: bool = Field(
+        default=True,
+        description="Whether to delete existing vectors before indexing. "
+                    "Set to true for clean re-indexing, false to preserve existing data."
+    )
+
+
+class DropCollectionRequest(BaseModel):
+    """Request model for dropping vector collection."""
+
+    drop_table: bool = Field(
+        default=True,
+        description="If True, drop entire table. If False, only drop HNSW index."
+    )
+    confirm: bool = Field(
+        ...,
+        description="Must be set to True to confirm deletion (safety check)"
     )

@@ -2,8 +2,12 @@
 FastAPI dependencies for dependency injection.
 
 This module provides reusable dependencies that can be injected into
-API route handlers for accessing shared resources like database clients,
-storage clients, configuration, and other services.
+API route handlers following proper layered architecture:
+- Services (SchemaService, VectorService) for business logic
+- Settings for configuration
+- Optional client dependencies for health checks only
+
+Routes should depend on services, not infrastructure clients directly.
 """
 
 from typing import Annotated
@@ -15,108 +19,10 @@ from ..infrastructure.storage_client import StorageClient
 from ..infrastructure.llm_client import LLMClient
 from ..infrastructure.embedding_client import EmbeddingClient
 from ..repositories.schema_repository import SchemaRepository
+from ..repositories.vector_repository import VectorRepository
 from ..services.schema_service import SchemaService
+from ..services.vector_service import VectorService
 from ..config import Settings
-
-
-def get_db_client(request: Request) -> DatabaseClient:
-    """
-    Dependency to get the database client from app state.
-
-    Usage in routes:
-        @app.get("/users")
-        async def get_users(db: DatabaseClientDep):
-            results = await db.execute_query_readonly("SELECT * FROM users LIMIT 10")
-            return results
-
-    Args:
-        request: FastAPI request object
-
-    Returns:
-        DatabaseClient instance
-
-    Raises:
-        RuntimeError: If database client is not initialized
-    """
-    if not hasattr(request.app.state, "db_client"):
-        raise RuntimeError("Database client not initialized")
-
-    return request.app.state.db_client
-
-
-def get_storage_client(request: Request) -> StorageClient:
-    """
-    Dependency to get the storage client from app state.
-
-    Usage in routes:
-        @app.get("/files")
-        async def list_files(storage: StorageClientDep):
-            files = await storage.list_files("documents")
-            return {"files": files}
-
-    Args:
-        request: FastAPI request object
-
-    Returns:
-        StorageClient instance
-
-    Raises:
-        RuntimeError: If storage client is not initialized
-    """
-    if not hasattr(request.app.state, "storage_client"):
-        raise RuntimeError("Storage client not initialized")
-
-    return request.app.state.storage_client
-
-
-def get_llm_client(request: Request) -> LLMClient:
-    """
-    Dependency to get the LLM client from app state.
-
-    Usage in routes:
-        @app.post("/generate")
-        async def generate_text(prompt: str, llm: LLMClientDep):
-            response = await llm.generate(prompt)
-            return {"response": response}
-
-    Args:
-        request: FastAPI request object
-
-    Returns:
-        LLMClient instance
-
-    Raises:
-        RuntimeError: If LLM client is not initialized
-    """
-    if not hasattr(request.app.state, "llm_client"):
-        raise RuntimeError("LLM client not initialized")
-
-    return request.app.state.llm_client
-
-
-def get_embedding_client(request: Request) -> EmbeddingClient:
-    """
-    Dependency to get the embedding client from app state.
-
-    Usage in routes:
-        @app.post("/embed")
-        async def embed_text(text: str, embedding: EmbeddingClientDep):
-            vector = await embedding.embed_text(text)
-            return {"vector": vector, "dimension": len(vector)}
-
-    Args:
-        request: FastAPI request object
-
-    Returns:
-        EmbeddingClient instance
-
-    Raises:
-        RuntimeError: If embedding client is not initialized
-    """
-    if not hasattr(request.app.state, "embedding_client"):
-        raise RuntimeError("Embedding client not initialized")
-
-    return request.app.state.embedding_client
 
 
 def get_settings(request: Request) -> Settings:
@@ -211,16 +117,84 @@ def get_schema_service(request: Request) -> SchemaService:
     return schema_service
 
 
+def get_vector_service(request: Request) -> VectorService:
+    """
+    Dependency to get a VectorService instance.
+
+    This creates a VectorService with full dependency tree:
+    VectorService → VectorRepository → DatabaseClient (shared)
+    VectorService → SchemaService → SchemaRepository → DatabaseClient (shared)
+
+    Uses shared DatabaseClient for both schema and vector operations.
+
+    Usage in routes:
+        @app.post("/schema/index")
+        async def index_schema(vector_service: VectorServiceDep):
+            stats = await vector_service.index_schema(schema="public")
+            return stats
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        VectorService instance
+
+    Raises:
+        RuntimeError: If required clients are not initialized
+    """
+    if not hasattr(request.app.state, "db_client"):
+        raise RuntimeError("Database client not initialized")
+    if not hasattr(request.app.state, "embedding_client"):
+        raise RuntimeError("Embedding client not initialized")
+
+    db_client = request.app.state.db_client
+    embedding_client = request.app.state.embedding_client
+    storage_client = getattr(request.app.state, "storage_client", None)
+    settings = getattr(request.app.state, "settings", None)
+
+    # Build SchemaService (needed for indexing)
+    yaml_path = None
+    yaml_bucket = None
+    if settings:
+        yaml_path = settings.storage.schema_yaml_path
+        yaml_bucket = settings.storage.default_bucket
+
+    schema_repo = SchemaRepository(db_client)
+    schema_service = SchemaService(
+        schema_repository=schema_repo,
+        storage_client=storage_client,
+        yaml_path=yaml_path,
+        yaml_bucket=yaml_bucket
+    )
+
+    # Build VectorRepository with shared DatabaseClient
+    if not settings:
+        raise RuntimeError("Settings not initialized")
+
+    vector_repo = VectorRepository(
+        db_client=db_client,
+        embedding_client=embedding_client,
+        config=settings.vector_store
+    )
+
+    # Build VectorService
+    batch_size = settings.vector_store.batch_size if settings else 100
+    vector_service = VectorService(
+        vector_repository=vector_repo,
+        schema_service=schema_service,
+        batch_size=batch_size
+    )
+
+    return vector_service
+
+
 # Type aliases for cleaner dependency injection
-# Required dependencies (raise error if not available)
-DatabaseClientDep = Annotated[DatabaseClient, Depends(get_db_client)]
-StorageClientDep = Annotated[StorageClient, Depends(get_storage_client)]
-LLMClientDep = Annotated[LLMClient, Depends(get_llm_client)]
-EmbeddingClientDep = Annotated[EmbeddingClient, Depends(get_embedding_client)]
+# Service dependencies (used in API routes)
 SchemaServiceDep = Annotated[SchemaService, Depends(get_schema_service)]
+VectorServiceDep = Annotated[VectorService, Depends(get_vector_service)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 
-# Optional dependencies (return None if not available - for health checks)
+# Optional client dependencies (used in health checks)
 OptionalDatabaseClientDep = Annotated[DatabaseClient | None, Depends(get_db_client_optional)]
 OptionalStorageClientDep = Annotated[StorageClient | None, Depends(get_storage_client_optional)]
 OptionalLLMClientDep = Annotated[LLMClient | None, Depends(get_llm_client_optional)]
