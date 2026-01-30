@@ -10,9 +10,10 @@ A lightweight NL2SQL (Natural Language to SQL) prototype that enables users to q
 - [Setup](#setup)
 - [Configuration](#configuration)
 - [API Reference](#api-reference)
-- [Example Queries](#example-queries)
 - [Overview](#overview)
   - [Key Features](#key-features)
+- [References](#references)
+- [Example Queries](#example-queries)
 - [Architecture](#architecture)
   - [Layer Responsibilities](#layer-responsibilities)
 - [Tech Stack](#tech-stack)
@@ -32,7 +33,8 @@ A lightweight NL2SQL (Natural Language to SQL) prototype that enables users to q
 - Python 3.11+
 - Poetry (dependency management)
 - PostgreSQL 15+ with pgvector extension
-- OpenRouter API key
+- OpenRouter/Anthropic/OpenAI API key [for LLM and Embedding Models]
+- Supabase Project [Free Tier]
 
 ### 1. Clone and Install
 
@@ -143,13 +145,45 @@ NL2SQL__MAX_TABLES=6           # NL2SQLConfig.max_tables
 
 ## API Reference
 
-Refer to the interactive **Swagger UI** documentation available at:
+Start the Server and Refer to the interactive **Swagger UI** documentation available at:
 
 ```
 http://<host>:<port>/docs
 ```
 
 This provides complete API documentation with request/response schemas, try-it-out functionality, and all available endpoints.
+
+---
+
+## Overview
+
+NL2SQL converts natural language questions into safe, executable SQL queries and executes them to fetch final results. Unlike simple prompt-based approaches, this system uses a **multi-step pipeline** with:
+
+- **Semantic Schema Retrieval**: Vector search to find relevant tables/columns/relationships
+- **Deterministic Filtering**: Code-based filtering with hard caps (no LLM hallucination)
+- **Safe SQL Generation**: LLM generates SQL with retry loop
+- **Validation**: Static checks + EXPLAIN validation before execution
+- **Read-Only Execution**: All queries run with read-only enforcement
+
+### Key Features
+
+✅ **Production Safety**: SELECT-only, read-only connections, SQL validation disabling data manipulation
+✅ **Semantic Search**: pgvector-based schema retrieval  
+✅ **Deterministic Control**: No autonomous agents, explicit orchestration  
+✅ **Full Observability**: Structured JSON logging, trace IDs, provenance  
+✅ **Modular Architecture**: Swappable components via dependency injection  
+
+
+---
+
+## References
+
+This prototype draws inspiration from Swiggy's **Hermes Framework**—their production-grade Text-to-SQL system. The following blog posts from Swiggy Bytes provided valuable insights of the framework:
+
+- [Hermes: A Text-to-SQL Solution at Swiggy](https://bytes.swiggy.com/hermes-a-text-to-sql-solution-at-swiggy-81573fb4fb6e)
+- [Hermes V3: Building Swiggy's Conversational AI Analyst](https://bytes.swiggy.com/hermes-v3-building-swiggys-conversational-ai-analyst-a41057a2279d)
+
+
 
 ---
 
@@ -283,26 +317,6 @@ JOIN film f ON i.film_id = f.film_id
 - No LIMIT needed for single-row aggregate results
 - Implicit understanding of "unique" → DISTINCT
 
----
-
-## Overview
-
-NL2SQL converts natural language questions into safe, executable SQL queries. Unlike simple prompt-based approaches, this system uses a **multi-step pipeline** with:
-
-- **Semantic Schema Retrieval**: Vector search to find relevant tables/columns
-- **Deterministic Filtering**: Code-based filtering with hard caps (no LLM hallucination)
-- **Safe SQL Generation**: LLM generates SQL with retry loop
-- **Validation**: Static checks + EXPLAIN validation before execution
-- **Read-Only Execution**: All queries run with read-only enforcement
-
-### Key Features
-
-✅ **Production Safety**: SELECT-only, read-only connections, SQL validation  
-✅ **Semantic Search**: pgvector-based schema retrieval  
-✅ **Deterministic Control**: No autonomous agents, explicit orchestration  
-✅ **Full Observability**: Structured JSON logging, trace IDs, provenance  
-✅ **Modular Architecture**: Swappable components via dependency injection  
-✅ **Type Safety**: Full Pydantic v2 models, no `Any` types at boundaries  
 
 ----
 
